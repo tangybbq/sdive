@@ -1,7 +1,7 @@
 ---
 name: sdive-verify
-description: Run blind, adversarial verification of security-dive vulnerability hypotheses. Each run gives one hypothesis (claim and locations only) to the sdive-verifier subagent, which tries to refute it against the source, and records the verdict. Invoke as /sdive-verify <project> [N|all] [--ledger X]. Use after dives or sweeps have raised hypotheses.
-argument-hint: "<project> [N|all] [--ledger main]"
+description: Run blind, adversarial verification of security-dive vulnerability hypotheses. Each run gives one hypothesis (claim and locations only) to the sdive-verifier subagent, which tries to refute it against the source, and records the verdict. Invoke as /sdive-verify <project> [N|all] [--minutes M] [--parallel P] [--ledger X]. Use after dives or sweeps have raised hypotheses.
+argument-hint: "<project> [N|all] [--minutes M] [--parallel P] [--ledger main]"
 allowed-tools: Bash, Read, Agent, SendMessage
 ---
 
@@ -36,8 +36,16 @@ result file, `uv run sdive --ledger <ledger> abandon <id>`.
    fails, `uv run sdive --ledger <ledger> abandon <run_id>`.
 4. Print one line: finding slug → verdict, and the decisive reason in a phrase.
 
-Verify runs are independent; you may keep up to 3 in flight if the user asked
-for speed.
+**Sizing a session:** the user bounds cost with a run count or `--minutes M`
+(agent-minutes; roughly proportional to cost, and summed across parallel
+runs). For `--minutes`, run `uv run sdive --ledger <ledger> todo <project> --kind verify --minutes M`
+and use the "runs in M min" figure as N; say so in one line before starting.
+
+**Parallel:** `--parallel P` (default 1, at most 4) keeps up to P runs in
+flight: start P runs, dispatch their agents in one message so they run
+concurrently, record each as it returns, and start the next while the budget
+lasts. Leases keep runs from sharing targets. Concurrent verifiers cannot see each other's dossier notes, so two hypotheses describing the same defect may both come back verified rather than one as a duplicate; mention any obvious pairs in the summary. Parallelism saves
+wall-clock time, not cost.
 
 ## Finish
 

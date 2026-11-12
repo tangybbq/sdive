@@ -1,7 +1,7 @@
 ---
 name: sdive-dive
-description: Run security-dive deep-dive analysis runs. Each run takes the uncovered functions of the highest-priority file, has the sdive-auditor subagent examine them in depth, and records coverage and vulnerability hypotheses in the ledger. Invoke as /sdive-dive <project> [N|all] [--lens L] [--area A] [--rev R] [--ledger X]. Use when the user wants to deep-dive code for vulnerabilities or work through the dive queue.
-argument-hint: "<project> [N|all] [--lens holistic] [--area A] [--rev R] [--ledger main]"
+description: Run security-dive deep-dive analysis runs. Each run takes the uncovered functions of the highest-priority file, has the sdive-auditor subagent examine them in depth, and records coverage and vulnerability hypotheses in the ledger. Invoke as /sdive-dive <project> [N|all] [--minutes M] [--parallel P] [--lens L] [--area A] [--rev R] [--ledger X]. Use when the user wants to deep-dive code for vulnerabilities or work through the dive queue.
+argument-hint: "<project> [N|all] [--minutes M] [--parallel P] [--lens holistic] [--area A] [--rev R] [--ledger main]"
 allowed-tools: Bash, Read, Agent, SendMessage
 ---
 
@@ -48,9 +48,16 @@ result file, `uv run sdive --ledger <ledger> abandon <id>`.
      and note it.
 4. Print one line: run id, file, units covered/partial, hypothesis titles.
 
-Runs lease their targets, so you may keep up to 3 runs in flight at once
-(start several, dispatch the agents in parallel, record each as it returns) if
-the user asked for speed. Default is one at a time.
+**Sizing a session:** the user bounds cost with a run count or `--minutes M`
+(agent-minutes; roughly proportional to cost, and summed across parallel
+runs). For `--minutes`, run `uv run sdive --ledger <ledger> todo <project> --kind dive --lens <lens> --minutes M`
+and use the "runs in M min" figure as N; say so in one line before starting.
+
+**Parallel:** `--parallel P` (default 1, at most 4) keeps up to P runs in
+flight: start P runs, dispatch their agents in one message so they run
+concurrently, record each as it returns, and start the next while the budget
+lasts. Leases keep runs from sharing targets, and `next` starts each concurrent dive in an area no other in-flight dive is in (their dossier notes only reach each other once recorded). Parallelism saves
+wall-clock time, not cost.
 
 ## Finish
 

@@ -225,30 +225,57 @@ def next_(c: Ctx, project: str, kind: str, lens: str | None, rev: str | None,
     _emit_json(ledger.write_brief(c.conn, c.cfg, run_id))
 
 
+def _ledger_conns(cfg: Config) -> list:
+    """Connections to every ledger (main and disposable), for pooled statistics."""
+    paths = [cfg.with_ledger(MAIN_LEDGER).db_path]
+    paths += sorted((cfg.analysis / "ledgers").glob("*/sdive.db"))
+    return [connect(p) for p in paths if p.exists()]
+
+
 @main.command()
 @click.argument("project")
 @click.option("--rev", help="Snapshot revision (default: the default branch).")
 @click.option("--lens", "only", multiple=True, help="Only these lenses (repeatable).")
 @click.option("--area", help="Only this area.")
+@click.option("--kind", "kinds", multiple=True, type=click.Choice(["dive", "sweep", "verify"]),
+              help="Only these run kinds (repeatable).")
+@click.option("--minutes", type=float,
+              help="Also show how many runs of each fit in this many agent-minutes.")
 @click.option("--detail", is_flag=True, help="List every estimated run.")
 @pass_ctx
 def todo(c: Ctx, project: str, rev: str | None, only: tuple[str, ...], area: str | None,
-         detail: bool) -> None:
-    """Estimate the work left: runs per lens as `next` would hand them out.
+         kinds: tuple[str, ...], minutes: float | None, detail: bool) -> None:
+    """Estimate the work left: runs per lens as `next` would hand them out,
+    and agent-minutes (median run time, pooled over every ledger).
 
-    Dives use the holistic lens; sweeps every other lens. Use it to pick a
-    batch size (e.g. `/sdive-dive <project> 5`): runs are the unit of work and
-    of stopping, and coverage carries over between sessions.
+    Dives use the holistic lens; sweeps every other lens. Agent-minutes track
+    cost (parallel runs add up; they only save wall-clock time). Use --minutes
+    to size a session, e.g. `/sdive-dive <project> --minutes 40`.
     """
     p = c.project(project)
     sha, snap = _snapshot_for(c, p, rev)
+    per_run = ledger.run_minutes(_ledger_conns(c.cfg), p.name)
     plan = [("dive", "holistic")] + [("sweep", n) for n in ledger.available_lenses(p)
                                      if n != "holistic"]
     if only:
         plan = [(k, n) for k, n in plan if n in only]
+    if kinds:
+        plan = [(k, n) for k, n in plan if k in kinds]
     t = Table(title=f"{project} @ {sha[:12]} — work left")
-    for col in ("kind", "lens", "runs", "functions", "lines", "next run"):
-        t.add_column(col, justify="right" if col in ("runs", "functions", "lines") else "left")
+    cols = ["kind", "lens", "runs", "functions", "lines", "min/run", "agent-min"]
+    if minutes:
+        cols.append(f"runs in {minutes:g} min")
+    cols.append("next run")
+    for col in cols:
+        t.add_column(col, justify="left" if col in ("kind", "lens", "next run") else "right")
+
+    def est(kind: str, n: int) -> list[str]:
+        m, samples = per_run[kind]
+        cells = [f"{m:.1f}" + ("" if samples >= 5 else "?"), f"{n * m:.0f}"]
+        if minutes:
+            cells.append(str(min(n, max(1, int(minutes // m))) if n else 0))
+        return cells
+
     details = []
     for kind, lens in plan:
         runs = ledger.queue_estimate(c.conn, p, snap, kind, lens, area)
@@ -257,16 +284,19 @@ def todo(c: Ctx, project: str, rev: str | None, only: tuple[str, ...], area: str
             r0 = runs[0]
             nxt = (r0["paths"][0] if kind == "dive" else ", ".join(r0["areas"]))
         t.add_row(kind, lens, str(len(runs)), str(sum(r["functions"] for r in runs)),
-                  str(sum(r["lines"] for r in runs)), nxt)
+                  str(sum(r["lines"] for r in runs)), *est(kind, len(runs)), nxt)
         details += [(kind, lens, i, r) for i, r in enumerate(runs, 1)]
-    console.print(t)
     hyps = c.conn.execute(
         "SELECT count(*) FROM findings WHERE project = ? AND status = 'hypothesis'",
         (p.name,)).fetchone()[0]
+    if not kinds or "verify" in kinds:
+        t.add_row("verify", "", str(hyps), "", "", *est("verify", hyps), "")
+    console.print(t)
+    click.echo("min/run: median of recorded runs ('?' = fewer than 5 samples). "
+               "Agent-minutes add up across parallel runs.")
     started = c.conn.execute(
         "SELECT count(*) FROM runs WHERE project = ? AND status = 'started'",
         (p.name,)).fetchone()[0]
-    click.echo(f"hypotheses awaiting verification: {hyps}")
     if started:
         click.echo(f"runs started but not recorded: {started} "
                    f"(`sdive runs {project} --status started`; record or abandon them)")

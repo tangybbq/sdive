@@ -1,7 +1,7 @@
 ---
 name: sdive-sweep
-description: Run security-dive sweep runs — sdive-auditor passes over uncovered in-scope code through a single focused lens, a few whole areas per run — and record coverage and hypotheses. Invoke as /sdive-sweep <project> <lens|all> [N|all] [--area A] [--rev R] [--ledger X]. Use when the user wants a broad pass over a code base for one class of vulnerability.
-argument-hint: "<project> <lens|all> [N|all] [--area A] [--rev R] [--ledger main]"
+description: Run security-dive sweep runs — sdive-auditor passes over uncovered in-scope code through a single focused lens, a few whole areas per run — and record coverage and hypotheses. Invoke as /sdive-sweep <project> <lens|all> [N|all] [--minutes M] [--parallel P] [--area A] [--rev R] [--ledger X]. Use when the user wants a broad pass over a code base for one class of vulnerability.
+argument-hint: "<project> <lens|all> [N|all] [--minutes M] [--parallel P] [--area A] [--rev R] [--ledger main]"
 allowed-tools: Bash, Read, Agent, SendMessage
 ---
 
@@ -43,8 +43,16 @@ result file, `uv run sdive --ledger <ledger> abandon <id>`.
    fails, `uv run sdive --ledger <ledger> abandon <run_id>`.
 4. Print one line: lens, units covered/partial, hypothesis titles.
 
-Sweeps over different lenses are independent: with `all`, you may run up to 3
-lenses in parallel if the user asked for speed.
+**Sizing a session:** the user bounds cost with a run count or `--minutes M`
+(agent-minutes; roughly proportional to cost, and summed across parallel
+runs). For `--minutes`, run `uv run sdive --ledger <ledger> todo <project> --kind sweep --minutes M`
+and use the "runs in M min" figure as N; say so in one line before starting.
+
+**Parallel:** `--parallel P` (default 1, at most 4) keeps up to P runs in
+flight: start P runs, dispatch their agents in one message so they run
+concurrently, record each as it returns, and start the next while the budget
+lasts. Leases keep runs from sharing targets; prefer running different lenses side by side (each lens keeps its own coverage), rather than several runs of one lens. Parallelism saves
+wall-clock time, not cost.
 
 ## Finish
 

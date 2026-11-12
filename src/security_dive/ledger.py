@@ -249,8 +249,33 @@ def next_unit_run(
     rows = _uncovered_units(conn, project.name, snap, lens_id, kind, area)
     if not rows:
         return None
+    if kind == "dive":
+        rows = _prefer_idle_area(conn, project.name, snap, lens_id, rows)
     rows = _batch(rows, kind, max_units, max_lines)
     return _start_run(conn, project, kind, snap, lens_id, unit_ids=[r["id"] for r in rows])
+
+
+def _prefer_idle_area(conn: sqlite3.Connection, project: str, snap: int, lens_id: int,
+                      rows: list) -> list:
+    """With dives in flight, start the next one in an area none of them is in.
+
+    Parallel runs only see each other's dossier notes once recorded, so two
+    concurrent dives in one area can't build on (or deduplicate against) each
+    other. Spreading them across areas avoids that; with no idle area left the
+    queue order stands. Sequential runs are unaffected.
+    """
+    busy = {r[0] for r in conn.execute(
+        """SELECT DISTINCT uv.area FROM run_targets t JOIN runs r ON r.id = t.run_id
+           JOIN unit_versions uv ON uv.unit_id = t.unit_id AND uv.snapshot_id = :snap
+           WHERE r.status = 'started' AND r.kind = 'dive' AND r.lens_id = :lens
+             AND r.project = :project AND r.started_at > :cutoff""",
+        {"snap": snap, "lens": lens_id, "project": project, "cutoff": _lease_cutoff()})}
+    if not busy:
+        return rows
+    idle = [r for r in rows if r["area"] not in busy]
+    if not idle:
+        return rows
+    return idle + [r for r in rows if r["area"] in busy]
 
 
 def queue_estimate(
@@ -281,6 +306,32 @@ def queue_estimate(
         })
         rows = [r for r in rows if r["id"] not in taken]
     return runs
+
+
+DEFAULT_MINUTES = {"dive": 3.0, "sweep": 8.0, "verify": 2.0}
+
+
+def run_minutes(conns: list[sqlite3.Connection], project: str) -> dict[str, tuple[float, int]]:
+    """Median minutes per recorded run of each kind, pooled over `conns` (every
+    ledger), with the sample size; DEFAULT_MINUTES where there is no history.
+    Run time is a usable proxy for cost: both follow the tokens processed."""
+    samples: dict[str, list[float]] = {k: [] for k in DEFAULT_MINUTES}
+    for conn in conns:
+        for r in conn.execute(
+                "SELECT kind, (julianday(finished_at) - julianday(started_at)) * 1440 AS m "
+                "FROM runs WHERE project = ? AND status = 'recorded' AND finished_at IS NOT NULL",
+                (project,)):
+            if r["kind"] in samples and r["m"] is not None and r["m"] > 0:
+                samples[r["kind"]].append(r["m"])
+    out = {}
+    for kind, xs in samples.items():
+        if xs:
+            xs.sort()
+            mid = len(xs) // 2
+            out[kind] = ((xs[mid] if len(xs) % 2 else (xs[mid - 1] + xs[mid]) / 2), len(xs))
+        else:
+            out[kind] = (DEFAULT_MINUTES[kind], 0)
+    return out
 
 
 def next_verify_run(conn: sqlite3.Connection, project: Project) -> int | None:

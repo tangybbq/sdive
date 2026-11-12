@@ -17,14 +17,17 @@ Analysis runs interactively as Claude Code skills (start a session with the
 model you want, e.g. Mythos):
 
 ```
-uv run sdive todo mcuboot                   # runs left per lens: pick a batch size
+uv run sdive todo mcuboot --minutes 40      # runs and agent-minutes left per lens
 /sdive-sweep mcuboot memory-safety 2        # 2 sweep runs (a few areas each)
-/sdive-dive mcuboot 10                      # 10 deep-dive runs (holistic lens)
+/sdive-dive mcuboot --minutes 40            # as many dives as fit in ~40 agent-minutes
+/sdive-dive mcuboot 10 --parallel 3         # 10 dives, 3 at a time
 /sdive-verify mcuboot all                   # blind verification of hypotheses
 /sdive-bench mcuboot vanessa --rev 511dc9e2 # calibration round in a fresh ledger
 ```
 
-The count is the stopping point. Coverage is recorded per run, so the next
+Agent-minutes are estimated from the median recorded run time of each kind
+and track cost; parallel runs save wall-clock time but cost the same. The
+count is the stopping point. Coverage is recorded per run, so the next
 session continues where the last one stopped, as long as the code and the lens
 are unchanged: a changed function, or an edited lens file, puts that work back
 in the queue (agent prompt edits do not).

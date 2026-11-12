@@ -152,9 +152,14 @@ Notes from building it:
 - **Batching**: a dive run takes the uncovered functions of one file
   (highest priority first, capped at 40 functions / 600 lines); a sweep takes
   whole areas in priority order up to ~3000 lines (one area at least). Runs are
-  the unit of cost and of stopping: skills take a run count, `sdive todo`
-  estimates the runs left per lens, and coverage carries across sessions
-  (interrupted runs are recorded or abandoned at the start of the next).
+  the unit of cost and of stopping: skills take a run count or `--minutes`
+  (agent-minutes, converted to runs from median recorded run times pooled
+  over all ledgers — about $0.60 per agent-minute at list price for Mythos,
+  from the first 21-run verify session), `sdive todo` estimates what is left,
+  and coverage carries across sessions (interrupted runs are recorded or
+  abandoned at the start of the next). `--parallel P` keeps up to four runs in
+  flight; concurrent dives are started in different areas, because dossier
+  notes only reach other runs once recorded.
 
 ### Phase 1 — MCUboot calibration
 Write the auditor/verifier agents and the first lenses. **Recall benchmark:** run

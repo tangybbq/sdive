@@ -284,7 +284,7 @@ def test_dive_batch_respects_line_budget(cfg, indexed):
     keys = [t["key"] for t in ledger.brief(conn, cfg, run)["targets"]]
     assert keys == ["src/parser.c::check_len", "src/parser.c::parse"]
     # A function larger than the budget still goes alone.
-    run2 = ledger.next_unit_run(conn, p, snap, "dive", "memory", max_lines=1)
+    run2 = ledger.next_unit_run(conn, p, snap, "dive", "memory", area="parsing", max_lines=1)
     assert [t["key"] for t in ledger.brief(conn, cfg, run2)["targets"]] == [
         "src/parser.c::parse@2"]
 
@@ -397,3 +397,32 @@ def test_carry_line_map_follows_insertions_inside_a_function():
     assert m(2) == 2
     m = line_map(["x", "gone", "y"], ["x", "y"])
     assert (m(2), m(3)) == (2, 2)
+
+
+def test_parallel_dives_spread_across_areas(cfg, indexed):
+    p, conn, snap, _sha, _tree = indexed
+    first = ledger.next_unit_run(conn, p, snap, "dive", "memory", max_lines=1)
+    assert ledger.brief(conn, cfg, first)["targets"][0]["area"] == "parsing"
+    # parser.c still has work, but a dive is in flight there: go to misc.
+    second = ledger.next_unit_run(conn, p, snap, "dive", "memory", max_lines=1)
+    assert ledger.brief(conn, cfg, second)["targets"][0]["area"] == "misc"
+    # No idle area left: queue order again.
+    third = ledger.next_unit_run(conn, p, snap, "dive", "memory", max_lines=1)
+    assert ledger.brief(conn, cfg, third)["targets"][0]["area"] == "parsing"
+
+
+def test_run_minutes_median_and_defaults(cfg, indexed):
+    p, conn, snap, _sha, _tree = indexed
+    assert ledger.run_minutes([conn], p.name)["dive"] == (ledger.DEFAULT_MINUTES["dive"], 0)
+    for mins in (1, 5, 3):
+        run = ledger.next_unit_run(conn, p, snap, "dive", "memory")
+        ledger.record(conn, cfg, run, audit(run, [
+            (t["key"], "clean") for t in ledger.brief(conn, cfg, run)["targets"]]))
+        conn.execute("UPDATE runs SET started_at = '2026-01-01T00:00:00+00:00', "
+                     f"finished_at = '2026-01-01T00:0{mins}:00+00:00' WHERE id = ?", (run,))
+        if ledger.next_unit_run(conn, p, snap, "dive", "memory") is None:
+            break
+        conn.execute("DELETE FROM run_targets WHERE run_id = (SELECT max(id) FROM runs)")
+        conn.execute("DELETE FROM runs WHERE id = (SELECT max(id) FROM runs)")
+    m, n = ledger.run_minutes([conn], p.name)["dive"]
+    assert n == 2 and abs(m - 3.0) < 0.01  # median of 1 and 5
