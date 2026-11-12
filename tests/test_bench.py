@@ -28,6 +28,9 @@ def _corpus(tmp_path):
         if disc:
             (d / "disclosure.json").write_text(json.dumps(disc))
         (d / "result.json").write_text(json.dumps(res))
+    # 003's agent verdict says "yes"; a human override refutes it and wins.
+    (c / "003-port" / "override.json").write_text(json.dumps(
+        {"is_vulnerability": "no", "disposition": "refuted"}))
     return c
 
 
@@ -38,6 +41,8 @@ def test_import_and_report(tmp_path, cfg):
         "path": "src/parser.c", "line": 13}
     assert by_id["002"]["files"] == ["util.c"] and by_id["002"]["verdict"] == "fp"
     assert by_id["own-finding"]["verdict"] == "unclear"
+    assert by_id["003"]["verdict"] == "fp" and by_id["003"]["overridden"]
+    assert not by_id["001"]["overridden"]
     assert bench.truth_path(cfg, "demo", "t").is_relative_to(cfg.analysis / "truth")
 
     b = cfg.with_ledger("b1")

@@ -159,6 +159,30 @@ blind at `511dc9e2` (the Vanessa scan commit) without feeding the disclosures,
 then compare against the 46 known claims and our own validated verdicts. Tune
 prompts on misses and false positives before spending effort on `main`.
 
+Built (tooling); the benchmark rounds themselves run in a Mythos session:
+- **Lenses** (`projects/mcuboot/lenses/`): `holistic` for dives; `memory-safety`,
+  `authenticity` (P1/P5), `rollback` (P2), `secrets` (P3/P4), `recovery` (A2/P6),
+  `upgrade-state` for sweeps. Caveat: written after seeing the truth-set titles;
+  kept to general vulnerability classes, with the two most item-shaped lines
+  removed, but not independent of the benchmark.
+- **Agents** (`.claude/agents/`): `sdive-auditor`, `sdive-verifier` — Read, Grep,
+  Glob, Write only (no Bash), read-only boundaries stated in the prompt.
+- **Skills**: `/sdive-dive`, `/sdive-sweep`, `/sdive-verify`, `/sdive-bench`.
+- **Agent threat model**: `projects/mcuboot/threat-model.md`, derived from
+  zepsec's with all finding references and per-finding re-dispositions removed
+  (the original names benchmark answers).
+- **Ground truth**: `sdive bench import` from zepsec corpora, honouring
+  `override.json`; at `511dc9e2`, 9 validated bugs (plus overridden cf009,
+  cf010, cf011, #17 → 15 tp overall), 18 refuted traps, out-of-scope items
+  excluded. Imported from the 2026-08-11 precutover copy; re-import from a fresh
+  `pull-snapshot.sh` if verdicts have changed since.
+- **Blindness**: `.claude/settings.json` denies Read on `analysis/truth/` and
+  zepsec analysis dirs (best-effort for Grep/Glob per the docs; not documented
+  to cover custom subagents — test before the first real round), agents have no
+  Bash, and skills pass agents only the brief path.
+- **Rounds** use disposable ledgers (`--ledger bench-...`), so prompt changes are
+  measured in fresh rounds and nothing leaks into `main`.
+
 ### Phase 2 — MCUboot deep dive at `main`
 Core scope: `boot/bootutil` + `boot/boot_serial` + `boot/zephyr` (~25k lines,
 fits comfortably in context).

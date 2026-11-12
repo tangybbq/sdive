@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(/analysis/truth/**)",
+      "Read(~/ai/zepsec*/analysis/**)",
+      "Read(~/ai/zepsec/threat-model.md)"
+    ]
+  }
+}

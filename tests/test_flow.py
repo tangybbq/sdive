@@ -275,3 +275,15 @@ def test_absent_reference_is_skipped_and_noted(root, cfg, indexed):
     marker = repo.read_marker(tree)
     assert marker["absent_references"] == ["ext/old-lib"]
     assert [r["path"] for r in marker["references"]] == ["ext/lib", "ext/lib/core"]
+
+
+def test_dive_batch_respects_line_budget(cfg, indexed):
+    p, conn, snap, _sha, _tree = indexed
+    # check_len is 4 lines, parse 1, parse@2 4: a 5-line budget takes two.
+    run = ledger.next_unit_run(conn, p, snap, "dive", "memory", max_lines=5)
+    keys = [t["key"] for t in ledger.brief(conn, cfg, run)["targets"]]
+    assert keys == ["src/parser.c::check_len", "src/parser.c::parse"]
+    # A function larger than the budget still goes alone.
+    run2 = ledger.next_unit_run(conn, p, snap, "dive", "memory", max_lines=1)
+    assert [t["key"] for t in ledger.brief(conn, cfg, run2)["targets"]] == [
+        "src/parser.c::parse@2"]

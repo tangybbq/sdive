@@ -188,10 +188,11 @@ def lenses(c: Ctx, project: str) -> None:
 @click.option("--lens", help="Lens name (required for dive and sweep).")
 @click.option("--rev", help="Snapshot revision (default: the default branch).")
 @click.option("--area", help="Restrict dive/sweep to one area.")
-@click.option("--max-units", default=40, show_default=True, help="Dive batch size cap.")
+@click.option("--max-units", default=40, show_default=True, help="Dive batch: max functions.")
+@click.option("--max-lines", default=600, show_default=True, help="Dive batch: max total lines.")
 @pass_ctx
 def next_(c: Ctx, project: str, kind: str, lens: str | None, rev: str | None,
-          area: str | None, max_units: int) -> None:
+          area: str | None, max_units: int, max_lines: int) -> None:
     """Start a run on the next piece of work and print its brief as JSON.
 
     Exits with status 3 when there is nothing left to do.
@@ -203,7 +204,8 @@ def next_(c: Ctx, project: str, kind: str, lens: str | None, rev: str | None,
         if not lens:
             raise click.UsageError(f"--lens is required for --kind {kind}")
         _sha, snap = _snapshot_for(c, p, rev)
-        run_id = ledger.next_unit_run(c.conn, p, snap, kind, lens, area, max_units)
+        run_id = ledger.next_unit_run(c.conn, p, snap, kind, lens, area, max_units,
+                                          max_lines)
     if run_id is None:
         click.echo("nothing to do", err=True)
         sys.exit(EXIT_NOTHING_TO_DO)

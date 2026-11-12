@@ -60,6 +60,10 @@ def import_items(corpus_dirs: list[Path]) -> list[dict]:
             disc, res = _load(d / "disclosure.json"), _load(d / "result.json")
             if not disc and not res:
                 continue
+            # A human override (zepsec's override.json sidecar) supersedes the
+            # agent verdict in result.json.
+            override = _load(d / "override.json")
+            verdict_src = override if override.get("is_vulnerability") else res
             site = _parse_site(disc.get("site"))
             files = [site["path"]] if site else []
             files += [f for f in _as_list(res.get("affected_components")) if f not in files]
@@ -67,8 +71,10 @@ def import_items(corpus_dirs: list[Path]) -> list[dict]:
                 "id": disc.get("short_id") or d.name,
                 "slug": d.name,
                 "title": disc.get("title") or res.get("advisory_summary") or d.name,
-                "verdict": VERDICTS.get(str(res.get("is_vulnerability")).lower(), "unjudged"),
-                "disposition": res.get("disposition"),
+                "verdict": VERDICTS.get(
+                    str(verdict_src.get("is_vulnerability")).lower(), "unjudged"),
+                "disposition": verdict_src.get("disposition"),
+                "overridden": bool(override),
                 "cwe": res.get("cwe") or disc.get("cwe"),
                 "site": site,
                 "files": files,

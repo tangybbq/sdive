@@ -10,7 +10,7 @@ upstream = "https://github.com/mcu-tools/mcuboot.git"
 # Local clone used only as `--reference` when creating the mirror; never written.
 reference_repo = "/Users/davidb/linaro/mcuboot"
 default_branch = "main"
-threat_model = "../zepsec/threat-model.md"
+threat_model = "projects/mcuboot/threat-model.md"  # derived from ../zepsec/threat-model.md, finding refs removed
 
 [projects.zephyr]
 github = "zephyrproject-rtos/zephyr"

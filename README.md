@@ -13,7 +13,17 @@ uv run sdive units mcuboot        # snapshot main, index files + functions by ar
 uv run sdive coverage mcuboot     # per-area swept/dived coverage
 ```
 
-The analysis loop (normally driven by a skill):
+Analysis runs interactively as Claude Code skills (start a session with the
+model you want, e.g. Mythos):
+
+```
+/sdive-sweep mcuboot all                    # one pass per focused lens
+/sdive-dive mcuboot 10                      # 10 deep-dive runs (holistic lens)
+/sdive-verify mcuboot all                   # blind verification of hypotheses
+/sdive-bench mcuboot vanessa --rev 511dc9e2 # calibration round in a fresh ledger
+```
+
+The loop underneath:
 
 ```sh
 uv run sdive next mcuboot --kind dive --lens <lens>   # starts a run, prints the brief JSON

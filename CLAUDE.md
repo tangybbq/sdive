@@ -23,8 +23,14 @@ and roadmap** — read it before structural changes.
 - **Change findings follow the disclosure policy in `PLAN.md`**: comment on an
   unmerged PR (show the user the draft before posting); merged but unreleased →
   ordinary fix, no GHSA/CVE; released → GHSA via zepsec.
-- Every verdict names the threat-model property and attacker class
-  (`../zepsec/threat-model.md` for MCUboot).
+- Every verdict names the threat-model property and attacker class. Agents use
+  `projects/mcuboot/threat-model.md` (derived from `../zepsec/threat-model.md`
+  with finding references removed); keep finding IDs out of it.
+- **Benchmarks are blind.** Never read `analysis/truth/` (or zepsec analysis
+  trees) during analysis, never put truth content into lenses, agents, briefs or
+  dossiers. Only `sdive bench report` reads it, after a round.
+- Analysis agents (`.claude/agents/sdive-*`) get only the brief path from the
+  skills; they have no Bash.
 
 ## Commits
 
@@ -41,5 +47,6 @@ instructions.
 - Tests: `uv run pytest`. Lint: `uvx ruff check src tests`.
 - Module map: `config.py` (config + project scope/areas), `repo.py` (mirror,
   snapshots), `units.py` (tree-sitter extraction), `db.py` (schema, append-only
-  migrations), `schemas.py` (agent result models), `ledger.py` (queue, record,
-  reports), `cli.py`.
+  migrations), `schemas.py` (agent result models), `ledger.py` (queue, record, briefs,
+  reports), `bench.py` (ground truth, scoring), `cli.py`. Agents and skills:
+  `.claude/agents/`, `.claude/skills/`; lenses: `projects/<p>/lenses/`.
