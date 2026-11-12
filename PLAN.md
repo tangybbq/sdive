@@ -177,9 +177,12 @@ Built (tooling); the benchmark rounds themselves run in a Mythos session:
   excluded. Imported from the 2026-08-11 precutover copy; re-import from a fresh
   `pull-snapshot.sh` if verdicts have changed since.
 - **Blindness**: `.claude/settings.json` denies Read on `analysis/truth/` and
-  zepsec analysis dirs (best-effort for Grep/Glob per the docs; not documented
-  to cover custom subagents — test before the first real round), agents have no
-  Bash, and skills pass agents only the brief path.
+  zepsec analysis dirs, agents have no Bash, and skills pass agents only the
+  brief path. Tested 2026-11-12 from inside `sdive-auditor` (prompted to try):
+  Read, Grep and Glob on the truth file and folder, the zepsec corpora and
+  zepsec's threat model were all refused by the harness; a Grep over the parent
+  `analysis/` silently skipped the denied subtree; reads of the snapshot and
+  lenses worked. Not covered by deny rules: subprocesses (agents have no Bash).
 - **Rounds** use disposable ledgers (`--ledger bench-...`), so prompt changes are
   measured in fresh rounds and nothing leaks into `main`.
 
