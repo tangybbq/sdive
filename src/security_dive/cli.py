@@ -12,6 +12,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from . import bench as bench_mod
 from . import ledger, repo
 from .config import MAIN_LEDGER, Config, ConfigError, Project, load_config
 from .db import connect
@@ -135,6 +136,8 @@ def units(c: Ctx, project: str, rev: str | None, show: bool) -> None:
     ref = rev or p.default_branch
     sha = repo.resolve(c.cfg, p, ref)
     tree = repo.snapshot(c.cfg, p, sha)
+    for path in repo.read_marker(tree).get("absent_references", []):
+        click.echo(f"note: reference {path} is not a submodule at {sha[:12]}; skipped", err=True)
     found = extract_tree(p, tree)
     snap = ledger.snapshot_id(c.conn, p.name, sha, ref)
     ledger.index_units(c.conn, p.name, snap, found)
@@ -391,6 +394,70 @@ def finding_set(c: Ctx, slug: str, status: str, note: str | None) -> None:
     """Move a finding through its lifecycle (e.g. verified -> exported)."""
     old, new = ledger.set_finding_status(c.conn, slug, status, note)
     click.echo(f"{slug}: {old} -> {new}")
+
+
+@main.group()
+def bench() -> None:
+    """Benchmark a ledger against known ground truth (human use only)."""
+
+
+@bench.command("import")
+@click.argument("project")
+@click.argument("corpus", nargs=-1, required=True,
+                type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--name", required=True, help="Truth set name, e.g. vanessa.")
+@pass_ctx
+def bench_import(c: Ctx, project: str, corpus: tuple[Path, ...], name: str) -> None:
+    """Import ground truth from zepsec-style analysis directories."""
+    c.project(project)
+    data = bench_mod.save_truth(c.cfg, project, name, list(corpus))
+    counts = defaultdict(int)
+    for item in data["items"]:
+        counts[item["verdict"]] += 1
+    click.echo(f"{bench_mod.truth_path(c.cfg, project, name)}: {len(data['items'])} items "
+               f"({', '.join(f'{k} {v}' for k, v in sorted(counts.items()))})")
+
+
+@bench.command("report")
+@click.argument("project")
+@click.argument("name")
+@click.option("--rev", required=True, help="The commit the truth set was validated at.")
+@click.option("--json", "as_json", is_flag=True)
+@pass_ctx
+def bench_report(c: Ctx, project: str, name: str, rev: str, as_json: bool) -> None:
+    """Score this ledger's findings at REV against truth set NAME."""
+    p = c.project(project)
+    path = bench_mod.truth_path(c.cfg, project, name)
+    if not path.exists():
+        raise click.ClickException(f"no truth set {path}; run `sdive bench import`")
+    sha, snap = _snapshot_for(c, p, rev)
+    r = bench_mod.report(c.conn, p.name, snap, json.loads(path.read_text()))
+    if as_json:
+        _emit_json(r)
+        return
+    t = Table(title=f"{project} @ {sha[:12]} — ledger {c.cfg.ledger} vs {name}")
+    for col in ("id", "truth", "cwe", "examined", "matches (strength:status)", "title"):
+        t.add_column(col, overflow="fold")
+    for row in r["items"]:
+        if not row["in_scope"]:
+            continue
+        ms = " ".join(f"{m['slug']}({m['strength']}:{m['status']})" for m in row["matches"])
+        t.add_row(row["id"], row["verdict"], row["cwe"] or "", row["examined"], ms,
+                  row["title"][:60])
+    console.print(t)
+    s = r["summary"]
+    click.echo(f"true positives in scope: {s['tp']['in_scope']}; raised {s['tp']['raised']}, "
+               f"confirmed by verifier {s['tp']['confirmed']}")
+    click.echo(f"refuted claims (traps) in scope: {s['fp']['in_scope']}; raised "
+               f"{s['fp']['raised']}, wrongly confirmed {s['fp']['confirmed']}, rejected "
+               f"{s['fp']['rejected']}")
+    click.echo(f"unclear in scope: {s['unclear']['in_scope']}; raised {s['unclear']['raised']}")
+    click.echo(f"out of scope: {r['out_of_scope']}")
+    if r["unmatched_findings"]:
+        click.echo(f"findings matching no truth item ({len(r['unmatched_findings'])}) — "
+                   "review: new bugs or false positives:")
+        for f in r["unmatched_findings"]:
+            click.echo(f"  {f['slug']} [{f['status']}] {f['title']}")
 
 
 @main.command()

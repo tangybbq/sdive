@@ -263,3 +263,15 @@ def test_sweep_can_report_whole_files(cfg, indexed):
     dive = ledger.next_unit_run(conn, p, snap, "dive", "memory")
     with pytest.raises(ledger.LedgerError, match="is a file"):
         ledger.record(conn, cfg, dive, audit(dive, [("src/parser.c", "clean")]))
+
+
+def test_absent_reference_is_skipped_and_noted(root, cfg, indexed):
+    _p, _conn, _snap, sha, _tree = indexed
+    pt = root / "projects" / "demo" / "project.toml"
+    pt.write_text(pt.read_text() + '\n[[reference]]\npath = "ext/old-lib"\n')
+    from security_dive.config import load_config
+    cfg2 = load_config(root / "config.toml")
+    tree = repo.snapshot(cfg2, cfg2.project("demo"), sha)
+    marker = repo.read_marker(tree)
+    assert marker["absent_references"] == ["ext/old-lib"]
+    assert [r["path"] for r in marker["references"]] == ["ext/lib", "ext/lib/core"]

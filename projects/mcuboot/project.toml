@@ -21,6 +21,13 @@ default_area = { name = "misc", priority = 1, description = "In scope, not other
 # upstream notes. Zephyr builds use Zephyr's own crypto modules, not these
 # pins, so library-dependent claims must name the version relied on.
 
+# References apply where the submodule exists at the snapshot's commit.
+# ext/mbedtls is the pre-2026 path of the same 3.6 pin (e.g. at 511dc9e2).
+[[reference]]
+path = "ext/mbedtls"
+role = "Mbed TLS 3.6 LTS (older submodule path): classic mbedtls_* and PSA crypto APIs"
+export = ["include", "library", "3rdparty"]
+
 [[reference]]
 path = "ext/mbedtls-3.6.0"
 role = "Mbed TLS 3.6 LTS: classic mbedtls_* and PSA crypto APIs"

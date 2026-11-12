@@ -203,13 +203,17 @@ def _export_references(
     prefix: str,
     tree: Path,
     out: list[dict],
+    absent: list[str],
 ) -> None:
     mods = submodules(parent_git, parent_sha)
     for ref in refs:
         full = prefix + ref.path
         sm = mods.get(ref.path)
         if sm is None:
-            raise GitError(f"reference {full} is not a submodule at {parent_sha[:12]}")
+            # Submodule layouts change across history (MCUboot moved ext/mbedtls
+            # to ext/mbedtls-3.6.0); a reference applies where it exists.
+            absent.append(full)
+            continue
         sha = gitlink(parent_git, parent_sha, ref.path)
         url = _resolve_url(sm.url, parent_url)
         # Local submodule git dirs are keyed by submodule *name*, not path.
@@ -221,7 +225,7 @@ def _export_references(
                     "role": ref.role, "export": list(ref.export)})
         if ref.nested:
             _export_references(cfg, project, ref.nested, mirror, sha, url, local,
-                               full + "/", tree, out)
+                               full + "/", tree, out, absent)
 
 
 def _layout(project: Project) -> str:
@@ -260,8 +264,9 @@ def snapshot(cfg: Config, project: Project, sha: str) -> Path:
     try:
         _export(mirror, sha, tmp)
         refs: list[dict] = []
+        absent: list[str] = []
         _export_references(cfg, project, project.references, mirror, sha, project.upstream,
-                           _git_dir_of(project.reference_repo), "", tmp, refs)
+                           _git_dir_of(project.reference_repo), "", tmp, refs, absent)
     except Exception:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
@@ -270,6 +275,7 @@ def snapshot(cfg: Config, project: Project, sha: str) -> Path:
         "sha": sha,
         "layout": layout,
         "references": refs,
+        "absent_references": absent,
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "note": "git archive export; only listed reference submodules are included",
     }
