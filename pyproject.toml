@@ -1,0 +1,18 @@
+[project]
+name = "security-dive"
+version = "0.1.0"
+description = "Ledger and tooling for proactive, incremental security analysis of MCUboot and Zephyr"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.5.1",
+    "pydantic>=2.14.3",
+    "rich>=15.0.0",
+]
+
+[project.scripts]
+sdive = "security_dive.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"

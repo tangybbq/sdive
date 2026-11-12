@@ -1,0 +1,19 @@
+# security-dive configuration. Paths are absolute or relative to this file.
+
+[paths]
+analysis = "analysis"   # private: ledger, findings, dossiers (own nested repo)
+work = "work"           # disposable: mirrors, snapshots
+
+[projects.mcuboot]
+github = "mcu-tools/mcuboot"
+upstream = "https://github.com/mcu-tools/mcuboot.git"
+# Local clone used only as `--reference` when creating the mirror; never written.
+reference_repo = "/Users/davidb/linaro/mcuboot"
+default_branch = "main"
+threat_model = "../zepsec/threat-model.md"
+
+[projects.zephyr]
+github = "zephyrproject-rtos/zephyr"
+upstream = "https://github.com/zephyrproject-rtos/zephyr.git"
+reference_repo = "/Users/davidb/zephyrproject/zephyr"
+default_branch = "main"

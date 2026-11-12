@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# Private analysis state (own nested repo) and disposable work area.
+/analysis/
+/work/
