@@ -140,6 +140,10 @@ MIGRATIONS: list[str] = [
         created_at     TEXT NOT NULL
     );
     """,
+    # v3: findings carried in from another ledger ("<ledger>:<slug>").
+    """
+    ALTER TABLE findings ADD COLUMN carried_from TEXT;
+    """,
 ]
 
 

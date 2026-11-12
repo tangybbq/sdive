@@ -207,6 +207,10 @@ starts on `main` instead.
 ### Phase 2 — MCUboot deep dive at `main`
 Core scope: `boot/bootutil` + `boot/boot_serial` + `boot/zephyr` (~25k lines,
 fits comfortably in context).
+0. **Carried findings** — `sdive carry` copies a benchmark round's verified
+   findings into the main ledger as hypotheses at `main` (locations remapped
+   by function key, provenance in `carried_from`), so the ordinary blind
+   verify loop tells which are still live — cheaper than re-finding them.
 1. **Sweeps** — each focused lens over the core source, a few areas per run.
 2. **Entry-point dives** — image header/TLV parsing, serial recovery/SMP,
    swap-status and trailer reads, encrypted-key unwrap, `ext/` crypto glue.

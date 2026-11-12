@@ -38,6 +38,7 @@ uv run sdive record <id>                              # validate + apply to the 
 uv run sdive next mcuboot --kind verify               # blind verification of a hypothesis
 uv run sdive findings mcuboot
 uv run sdive --ledger <round> bench judge mcuboot vanessa <item> <slug>...  # score a round
+uv run sdive carry mcuboot --from <round>          # re-queue a round's verified findings at main
 uv run sdive upstream mcuboot                         # defects noted in reference trees
 uv run sdive schema audit|verify                      # the result JSON schemas
 ```

@@ -308,3 +308,92 @@ def test_sweep_batches_whole_areas_and_estimate(cfg, indexed):
     # An area larger than the budget still goes whole.
     run2 = ledger.next_unit_run(conn, p, snap, "sweep", "memory", max_lines=1)
     assert [t["key"] for t in ledger.brief(conn, cfg, run2)["targets"]] == ["src/util.c::helper"]
+
+
+def test_carry_findings_to_newer_snapshot(cfg, indexed, upstream):
+    from security_dive import carry
+    p, conn, _snap, sha, _tree = indexed
+    # Source: a round at the original commit with three findings.
+    bench = cfg.with_ledger("round1")
+    bconn = connect(bench.db_path)
+    bsnap = ledger.snapshot_id(bconn, p.name, sha, "main")
+    ledger.index_units(bconn, p.name, bsnap, extract_tree(p, repo.snapshot(bench, p, sha)))
+    run = ledger.next_unit_run(bconn, p, bsnap, "sweep", "memory")
+    targets = [t["key"] for t in ledger.brief(bconn, bench, run)["targets"]]
+    def hyp(title, path, line):
+        return {**HYP, "title": title, "claim": f"see {path}:{line}",
+                "locations": [{"path": path, "start_line": line, "end_line": line}]}
+    ledger.record(bconn, bench, run, audit(run, [(k, "hypotheses") for k in targets], [
+        hyp("len check", "src/parser.c", 5),     # check_len: will only move
+        hyp("buf read", "src/parser.c", 13),     # parse@2: will change
+        hyp("helper bug", "src/util.c", 3),      # util.c: will be deleted
+    ]))
+    v = ledger.next_verify_run(bconn, p)
+    ledger.record(bconn, bench, v, {"run_id": v, "model": "m", "verdict": "verified",
+                                    "reasoning": "r", "property": "P6", "attacker": "A2"})
+
+    # Upstream moves on: parser.c shifts down two lines, a new #elif variant of
+    # parse goes in before the old parse@2 (which becomes parse@3) and that one
+    # changes; util.c is deleted.
+    src = (upstream / "src" / "parser.c").read_text()
+    (upstream / "src" / "parser.c").write_text(
+        "/* a */\n/* b */\n" + src.replace("&& buf[0]", "&& len > 0 && buf[0]").replace(
+            "#else\n",
+            "#elif defined(MID)\nint parse(const char *buf, int len)\n{\n    return 0;\n}\n"
+            "#else\n"))
+    (upstream / "src" / "util.c").unlink()
+    git(upstream, "-c", "user.name=t", "-c", "user.email=t@example.com",
+        "commit", "-q", "-am", "move on")
+    repo.ensure_mirror(cfg, p)
+    sha2 = repo.resolve(cfg, p, "main")
+    snap2 = ledger.snapshot_id(conn, p.name, sha2, "main")
+    ledger.index_units(conn, p.name, snap2, extract_tree(p, repo.snapshot(cfg, p, sha2)))
+
+    # Default: only verified findings ("len check", verified first as the oldest).
+    rows = carry.carry(bconn, "round1", conn, p.name, snap2, dry_run=True)
+    assert [r["source"] for r in rows] == ["len-check"]
+    assert conn.execute("SELECT count(*) FROM findings").fetchone()[0] == 0
+
+    rows = carry.carry(bconn, "round1", conn, p.name, snap2,
+                       statuses=("verified", "hypothesis"),
+                       tree_for=lambda s: cfg.snapshot_path(p.name, s))
+    by = {r["source"]: r for r in rows}
+    assert by["len-check"]["code"] == "unchanged"
+    assert by["len-check"]["locations"][0]["start_line"] == 7
+    assert by["buf-read"]["code"] == "changed"
+    assert by["buf-read"]["locations"][0]["start_line"] == 20
+    assert conn.execute("SELECT key FROM units WHERE id = ?", (
+        by["buf-read"]["locations"][0]["unit_id"],)).fetchone()[0] == "src/parser.c::parse@3"
+    assert by["helper-bug"]["code"] == "gone" and by["helper-bug"]["skipped"]
+    assert by["helper-bug"]["slug"] is None
+
+    f = conn.execute("SELECT * FROM findings WHERE slug = 'len-check'").fetchone()
+    assert f["status"] == "hypothesis" and f["snapshot_id"] == snap2
+    assert f["carried_from"] == "round1:len-check"
+    # The verifier's brief is blind to the earlier verdict and provenance.
+    vrun = ledger.next_verify_run(conn, p)
+    b = ledger.brief(conn, cfg, vrun)
+    assert b["snapshot"]["sha"] == sha2
+    assert b["finding"]["locations"][0]["start_line"] == 7
+    assert b["finding"]["claim"].startswith(f"[Line numbers in this claim refer to demo@{sha[:12]}")
+    assert "verified" not in json.dumps(b["finding"]) and "round1" not in json.dumps(b)
+
+    # Carrying again skips what is already there.
+    again = carry.carry(bconn, "round1", conn, p.name, snap2,
+                        statuses=("verified", "hypothesis"))
+    assert all(r["slug"] is None for r in again)
+    assert {r["skipped"] for r in again if r["source"] != "helper-bug"} == {
+        "already carried as len-check", "already carried as buf-read"}
+
+
+def test_carry_line_map_follows_insertions_inside_a_function():
+    from security_dive.carry import line_map
+    old = ["f() {", "a;", "b;", "flagged;", "}"]
+    new = ["f() {", "a;", "new1;", "new2;", "b;", "flagged;", "}"]
+    m = line_map(old, new)
+    assert [m(i) for i in range(1, 6)] == [1, 2, 5, 6, 7]
+    # A replaced line maps into the replacement; a deleted one to where it was.
+    m = line_map(["x", "old", "y"], ["x", "new", "y"])
+    assert m(2) == 2
+    m = line_map(["x", "gone", "y"], ["x", "y"])
+    assert (m(2), m(3)) == (2, 2)

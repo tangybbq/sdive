@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import bench as bench_mod
+from . import carry as carry_mod
 from . import ledger, repo
 from .config import MAIN_LEDGER, Config, ConfigError, Project, load_config
 from .db import connect
@@ -433,6 +434,51 @@ def upstream(c: Ctx, project: str, as_json: bool) -> None:
         t.add_row(str(r["id"]), r["component"], (r["component_sha"] or "")[:12], r["status"],
                   str(r["run_id"]), r["title"])
     console.print(t)
+
+
+@main.command()
+@click.argument("project")
+@click.option("--from", "source", required=True, help="Ledger to carry findings from.")
+@click.option("--rev", help="Target snapshot (default: the default branch).")
+@click.option("--status", "statuses", multiple=True,
+              help="Source statuses to carry (repeatable; default: verified).")
+@click.option("--slug", "slugs", multiple=True, help="Only these source findings.")
+@click.option("--dry-run", is_flag=True, help="Show the mapping; change nothing.")
+@pass_ctx
+def carry(c: Ctx, project: str, source: str, rev: str | None, statuses: tuple[str, ...],
+          slugs: tuple[str, ...], dry_run: bool) -> None:
+    """Carry findings from another ledger into this one, as hypotheses at REV.
+
+    E.g. `sdive carry mcuboot --from bench-vanessa-20261112` re-queues a
+    round's verified findings for blind verification against current `main`.
+    Locations are remapped through function keys; the "code" column says
+    whether the functions involved are unchanged, changed, or gone.
+    """
+    p = c.project(project)
+    if source == c.cfg.ledger:
+        raise click.UsageError("--from must name a different ledger")
+    src_cfg = c.cfg.with_ledger(source)
+    if not src_cfg.db_path.exists():
+        raise click.ClickException(f"no ledger {source!r} ({src_cfg.db_path})")
+    sha, snap = _snapshot_for(c, p, rev)
+    rows = carry_mod.carry(connect(src_cfg.db_path), source, c.conn, p.name, snap,
+                           statuses or carry_mod.DEFAULT_STATUSES, list(slugs) or None,
+                           dry_run, tree_for=lambda s: c.cfg.snapshot_path(p.name, s))
+    t = Table(title=f"{source} -> {c.cfg.ledger} @ {sha[:12]}" + (" (dry run)" if dry_run else ""))
+    for col in ("source", "status", "code", "locations", "result"):
+        t.add_column(col, overflow="fold")
+    for r in rows:
+        states = defaultdict(int)
+        for loc in r["locations"]:
+            states[loc["state"]] += 1
+        result = r["skipped"] or (f"+ {r['slug']}" if r["slug"] else "would carry")
+        t.add_row(r["source"], r["status"], r["code"],
+                  ", ".join(f"{n} {k}" for k, n in sorted(states.items())), result)
+    console.print(t)
+    n = sum(1 for r in rows if r["slug"])
+    if n:
+        click.echo(f"{n} carried as hypotheses; verify with /sdive-verify {project} all"
+                   + ("" if c.cfg.ledger == MAIN_LEDGER else f" --ledger {c.cfg.ledger}"))
 
 
 @main.group()
