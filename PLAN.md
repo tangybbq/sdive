@@ -112,10 +112,25 @@ for the author to fix it.
 
 ## Phases
 
-### Phase 0 — skeleton (no LLM)
+### Phase 0 — skeleton (no LLM) — done
 Config; `sdive mirror` / `sdive snapshot`; DB schema; tree-sitter unit extraction
-for MCUboot; `areas.toml`; `sdive units` / `sdive coverage` reports;
-`sdive next` / `sdive record` with the result schemas.
+for MCUboot; areas in `projects/mcuboot/project.toml`; `sdive units` /
+`sdive coverage` reports; `sdive next` / `sdive record` with the result schemas.
+
+Notes from building it:
+- **Preprocessor.** tree-sitter doesn't preprocess, and MCUboot puts `#if` in
+  signatures and bodies. The extractor parses renderings that keep one branch
+  per `#if` group (first, last, then the exact branch path for any column-0 `}`
+  still unaccounted for) and merges by name and line. On MCUboot `main` this
+  gives 462 functions, and every `.c` file's count matches its column-0 `}`s.
+- **Unit keys** are `path::func`, with `@2`, `@3` for `#if` variants in line
+  order. Function hashes cover the original lines, so a change in any branch
+  invalidates the unit.
+- **Snapshots** are `git archive` exports, so submodules (e.g. `ext/mbedtls`)
+  are not included.
+- **Dive batching**: a dive run takes the uncovered functions of one file
+  (highest priority first, capped at 40); a sweep takes every uncovered
+  function in scope or in one area.
 
 ### Phase 1 — MCUboot calibration
 Write the auditor/verifier agents and the first lenses. **Recall benchmark:** run

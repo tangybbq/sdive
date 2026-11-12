@@ -1,0 +1,145 @@
+# MCUboot analysis scope and areas. Paths are repo-relative; `**` spans
+# directories. Only .c/.h files are indexed. Areas match in order, first wins;
+# priority 5 = most directly attacker-exposed. Phase 2 core scope; ports, ext/
+# and imgtool are a later tier (add them to `include` with low-priority areas).
+
+[scope]
+include = [
+    "boot/bootutil/**",
+    "boot/boot_serial/src/**",
+    "boot/boot_serial/include/**",
+    "boot/zephyr/**",
+]
+exclude = [
+    "**/test/**",
+    "boot/zephyr/hooks_sample.c",
+]
+default_area = { name = "misc", priority = 1, description = "In scope, not otherwise classified." }
+
+[[areas]]
+name = "image-validate"
+priority = 5
+description = "Image header and TLV parsing, image hashing, key lookup, security counter: the P1/P2 decision path."
+globs = [
+    "boot/bootutil/src/image_validate.c",
+    "boot/bootutil/src/tlv.c",
+    "boot/bootutil/src/bootutil_img_hash.c",
+    "boot/bootutil/src/bootutil_find_key.c",
+    "boot/bootutil/src/bootutil_img_security_cnt.c",
+    "boot/bootutil/include/bootutil/image.h",
+    "boot/bootutil/include/bootutil/security_cnt.h",
+    "boot/bootutil/include/bootutil/sign_key.h",
+    "boot/zephyr/keys.c",
+]
+
+[[areas]]
+name = "signature"
+priority = 5
+description = "Signature verification backends and their crypto glue (ECDSA, Ed25519, RSA, hashes)."
+globs = [
+    "boot/bootutil/src/image_ecdsa.c",
+    "boot/bootutil/src/image_ed25519.c",
+    "boot/bootutil/src/image_rsa.c",
+    "boot/bootutil/src/ed25519_psa.c",
+    "boot/bootutil/include/bootutil/crypto/ecdsa.h",
+    "boot/bootutil/include/bootutil/crypto/rsa.h",
+    "boot/bootutil/include/bootutil/crypto/sha.h",
+    "boot/bootutil/include/bootutil/crypto/common.h",
+]
+
+[[areas]]
+name = "serial-recovery"
+priority = 5
+description = "Serial recovery / SMP: unauthenticated by design (A2); CBOR request parsing and flash writes."
+globs = [
+    "boot/boot_serial/**",
+    "boot/zephyr/serial_adapter.c",
+    "boot/zephyr/boot_serial_extension*.c",
+    "boot/zephyr/include/serial_adapter/**",
+    "boot/zephyr/include/boot_serial/**",
+]
+
+[[areas]]
+name = "encryption"
+priority = 5
+description = "Encrypted images: key unwrap/ECIES, AES-CTR, HMAC; key confidentiality (P3) and plaintext (P4)."
+globs = [
+    "boot/bootutil/src/encrypted.c",
+    "boot/bootutil/src/encrypted_psa.c",
+    "boot/bootutil/include/bootutil/enc_key*.h",
+    "boot/bootutil/include/bootutil/crypto/aes_*.h",
+    "boot/bootutil/include/bootutil/crypto/ecdh_*.h",
+    "boot/bootutil/include/bootutil/crypto/hmac_sha256.h",
+]
+
+[[areas]]
+name = "swap"
+priority = 4
+description = "Upgrade swap algorithms (scratch, move, offset): copy loops, status sectors, power-loss resumption."
+globs = [
+    "boot/bootutil/src/swap_*.c",
+    "boot/bootutil/src/swap_priv.h",
+]
+
+[[areas]]
+name = "trailer-status"
+priority = 4
+description = "Image trailer and swap-status read/write, magic/flags, public request API."
+globs = [
+    "boot/bootutil/src/bootutil_misc.[ch]",
+    "boot/bootutil/src/bootutil_public.c",
+    "boot/bootutil/src/bootutil_priv.h",
+    "boot/bootutil/include/bootutil/boot_status.h",
+    "boot/bootutil/include/bootutil/bootutil_public.h",
+]
+
+[[areas]]
+name = "loader"
+priority = 4
+description = "Boot decision and image selection: slot choice, upgrade flow, RAM load, direct-XIP, single loader."
+globs = [
+    "boot/bootutil/src/loader.c",
+    "boot/bootutil/src/bootutil_loader.[ch]",
+    "boot/bootutil/src/ram_load.c",
+    "boot/bootutil/include/bootutil/ramload.h",
+    "boot/zephyr/ram_load.c",
+    "boot/zephyr/single_loader.c",
+    "boot/zephyr/firmware_loader.c",
+]
+
+[[areas]]
+name = "flash-layout"
+priority = 4
+description = "Flash area and sector helpers: offset/size arithmetic at the flash-write boundary."
+globs = [
+    "boot/bootutil/src/bootutil_area.[ch]",
+    "boot/zephyr/flash_map_extended.c",
+    "boot/zephyr/flash_check.c",
+    "boot/zephyr/include/flash_map_backend/**",
+    "boot/zephyr/include/sysflash/**",
+]
+
+[[areas]]
+name = "measured-boot"
+priority = 3
+description = "Boot records and shared data handed to later stages (P5 attestation)."
+globs = [
+    "boot/bootutil/src/boot_record.c",
+    "boot/bootutil/include/bootutil/boot_record.h",
+    "boot/zephyr/shared_data.c",
+]
+
+[[areas]]
+name = "fih"
+priority = 3
+description = "Fault-injection hardening primitives (A3, defense in depth)."
+globs = [
+    "boot/bootutil/src/fault_injection_hardening*.c",
+    "boot/bootutil/include/bootutil/fault_injection_hardening*.h",
+]
+
+[[areas]]
+name = "zephyr-port"
+priority = 2
+description = "Zephyr glue: main, I/O, OS shims, watchdog, cleanup before jump, configuration headers."
+globs = ["boot/zephyr/**"]
