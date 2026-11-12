@@ -1,8 +1,10 @@
-"""sdive — bookkeeping CLI for security-dive. Makes no LLM calls."""
+"""sdive — bookkeeping CLI for security-dive. Makes no LLM calls itself; `run` launches
+the claude CLI."""
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from collections import defaultdict
@@ -14,7 +16,7 @@ from rich.table import Table
 
 from . import bench as bench_mod
 from . import carry as carry_mod
-from . import ledger, repo
+from . import launch, ledger, repo
 from .config import MAIN_LEDGER, Config, ConfigError, Project, load_config
 from .db import connect
 from .schemas import SCHEMAS
@@ -305,6 +307,70 @@ def todo(c: Ctx, project: str, rev: str | None, only: tuple[str, ...], area: str
             where = r["paths"][0] if kind == "dive" else ", ".join(r["areas"])
             click.echo(f"{kind:5} {lens:16} #{i:<3} {r['functions']:4} fn {r['lines']:6} lines"
                        f"  {where}")
+
+
+@main.command("run")
+@click.argument("project")
+@click.argument("kind", required=False, type=click.Choice(["auto", "verify", "sweep", "dive"]),
+                default="auto")
+@click.argument("lens", required=False)
+@click.option("--runs", type=int, help="Number of runs (default 1 unless --minutes).")
+@click.option("--minutes", type=float, help="Budget in agent-minutes (see `sdive todo`).")
+@click.option("--parallel", type=click.IntRange(1, 4), default=1, show_default=True)
+@click.option("--model", envvar="SDIVE_MODEL", default=launch.DEFAULT_MODEL, show_default=True)
+@click.option("-i", "--interactive", is_flag=True,
+              help="Open an interactive session instead of running headless (-p).")
+@click.option("--keep-api-key", is_flag=True,
+              help="Pass ANTHROPIC_API_KEY through (bills the API, not the plan).")
+@click.option("--dry-run", is_flag=True, help="Print the claude command; don't run it.")
+@pass_ctx
+def run_(c: Ctx, project: str, kind: str, lens: str | None, runs: int | None,
+         minutes: float | None, parallel: int, model: str, interactive: bool,
+         keep_api_key: bool, dry_run: bool) -> None:
+    """Launch Claude Code on the next piece of work (or KIND [LENS]).
+
+    auto: verify pending hypotheses, else the next lens in the project's
+    sweep_order with sweep work left, else dives. Runs headless with
+    progress streamed; the session log and its reported cost are saved under
+    the ledger's sessions/ directory. Examples:
+
+      sdive run mcuboot --minutes 40
+      sdive run mcuboot sweep memory-safety --runs 2
+      sdive run mcuboot dive --runs 1 --dry-run
+    """
+    if runs and minutes:
+        raise click.UsageError("give --runs or --minutes, not both")
+    p = c.project(project)
+    _sha, snap = _snapshot_for(c, p, None)
+    pending = c.conn.execute(
+        "SELECT count(*) FROM findings WHERE project = ? AND status = 'hypothesis'",
+        (p.name,)).fetchone()[0]
+    order = p.sweep_order or tuple(n for n in ledger.available_lenses(p) if n != "holistic")
+    plan = launch.choose(None if kind == "auto" else kind, lens, pending,
+                         lambda n: len(ledger.queue_estimate(c.conn, p, snap, "sweep", n)),
+                         order)
+    if plan is None:
+        click.echo(f"nothing to do for {kind}" + (f" {lens}" if lens else ""))
+        sys.exit(EXIT_NOTHING_TO_DO)
+    prompt = launch.invocation(plan, p.name, c.cfg.ledger, runs, minutes, parallel)
+    argv = launch.command(prompt, model, headless=not interactive, staging=c.cfg.staging)
+    click.echo(f"{plan.reason} → {prompt}")
+    if dry_run:
+        click.echo(" ".join(_shell_quote(a) for a in argv))
+        return
+    env = launch.child_env(keep_api_key)
+    if interactive:
+        os.chdir(c.cfg.root)
+        os.execvpe(argv[0], argv, env)
+    status = launch.run(argv, env, c.cfg.root, c.cfg.ledger_dir / "sessions",
+                        {"project": p.name, "ledger": c.cfg.ledger, "model": model,
+                         "prompt": prompt})
+    sys.exit(status)
+
+
+def _shell_quote(arg: str) -> str:
+    import shlex
+    return shlex.quote(arg)
 
 
 @main.command("brief")

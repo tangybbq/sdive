@@ -7,7 +7,9 @@ and roadmap** — read it before structural changes.
 
 - `sdive` (`src/security_dive/`) is the deterministic CLI: mirrors, snapshots,
   units, the SQLite ledger, the queue, validated ingestion, reports. **It makes
-  no LLM/API calls.**
+  no LLM/API calls itself**; `sdive run` only launches the `claude` CLI on a
+  skill (headless, writes limited to the ledger's staging directory, with
+  `ANTHROPIC_API_KEY` stripped so it uses the logged-in plan).
 - Analysis runs as Claude Code skills/subagents in `.claude/`, interactively.
   Agents write JSON to staging; only `sdive record` writes the ledger.
 - Config: `config.toml` (per-project paths/repos).
@@ -48,5 +50,6 @@ instructions.
 - Module map: `config.py` (config + project scope/areas), `repo.py` (mirror,
   snapshots), `units.py` (tree-sitter extraction), `db.py` (schema, append-only
   migrations), `schemas.py` (agent result models), `ledger.py` (queue, record, briefs,
-  reports), `bench.py` (ground truth, scoring), `cli.py`. Agents and skills:
+  reports), `bench.py` (ground truth, scoring), `carry.py` (findings across
+  ledgers), `launch.py` (`sdive run`), `cli.py`. Agents and skills:
   `.claude/agents/`, `.claude/skills/`; lenses: `projects/<p>/lenses/`.

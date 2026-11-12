@@ -3,6 +3,10 @@
 # priority 5 = most directly attacker-exposed. Phase 2 core scope; ports, ext/
 # and imgtool are a later tier (add them to `include` with low-priority areas).
 
+# `sdive run` (auto) sweeps lenses in this order before moving on to dives.
+[runs]
+sweep_order = ["memory-safety", "authenticity", "recovery", "upgrade-state", "rollback", "secrets"]
+
 [scope]
 include = [
     "boot/bootutil/**",

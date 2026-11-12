@@ -101,6 +101,7 @@ class Project:
     areas: tuple[Area, ...]
     default_area: Area
     references: tuple[Reference, ...] = ()
+    sweep_order: tuple[str, ...] = ()   # lens order for `sdive run` auto
 
     @property
     def lenses_dir(self) -> Path:
@@ -257,6 +258,7 @@ def _load_project(root: Path, name: str, raw: dict) -> Project:
         areas=areas,
         default_area=default_area,
         references=tuple(_load_reference(r) for r in spec.get("reference", ())),
+        sweep_order=tuple(spec.get("runs", {}).get("sweep_order", ())),
     )
 
 

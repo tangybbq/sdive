@@ -13,8 +13,20 @@ uv run sdive units mcuboot        # snapshot main, index files + functions by ar
 uv run sdive coverage mcuboot     # per-area swept/dived coverage
 ```
 
-Analysis runs interactively as Claude Code skills (start a session with the
-model you want, e.g. Mythos):
+Analysis runs as Claude Code skills. `sdive run` picks the next work and
+launches `claude` on it headless (default model `claude-mythos-5-2`, or
+`--model`/`SDIVE_MODEL`), streaming progress and saving the session log and
+its reported cost under `analysis/sessions/`:
+
+```sh
+uv run sdive run mcuboot --minutes 40          # verify pending, else next sweep lens, else dives
+uv run sdive run mcuboot dive --runs 1         # one dive
+uv run sdive run mcuboot sweep authenticity --minutes 30 --parallel 2
+uv run sdive run mcuboot --dry-run             # show the claude command only
+uv run sdive run mcuboot -i                    # same, but an interactive session
+```
+
+Or type the skills yourself in a Claude Code session:
 
 ```
 uv run sdive todo mcuboot --minutes 40      # runs and agent-minutes left per lens
