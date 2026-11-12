@@ -16,6 +16,26 @@ exclude = [
 ]
 default_area = { name = "misc", priority = 1, description = "In scope, not otherwise classified." }
 
+# Reference trees: submodules exported into snapshots so agents can establish
+# API contracts. Never indexed or audited; defects found in them become
+# upstream notes. Zephyr builds use Zephyr's own crypto modules, not these
+# pins, so library-dependent claims must name the version relied on.
+
+[[reference]]
+path = "ext/mbedtls-3.6.0"
+role = "Mbed TLS 3.6 LTS: classic mbedtls_* and PSA crypto APIs"
+export = ["include", "library", "3rdparty"]
+
+[[reference]]
+path = "ext/mbedtls-4.1.0"
+role = "Mbed TLS 4.1: TLS/X.509 layer; crypto moved to TF-PSA-Crypto (PSA-only)"
+export = ["include", "library", "3rdparty"]
+
+  [[reference.nested]]
+  path = "tf-psa-crypto"
+  role = "TF-PSA-Crypto (Mbed TLS 4.x crypto): PSA API, builtin drivers, PK/ASN.1 extras"
+  export = ["include", "core", "drivers", "dispatch", "platform", "extras", "utilities"]
+
 [[areas]]
 name = "image-validate"
 priority = 5

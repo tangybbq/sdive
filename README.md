@@ -21,13 +21,15 @@ uv run sdive next mcuboot --kind dive --lens <lens>   # starts a run, prints the
 uv run sdive record <id>                              # validate + apply to the ledger
 uv run sdive next mcuboot --kind verify               # blind verification of a hypothesis
 uv run sdive findings mcuboot
+uv run sdive upstream mcuboot                         # defects noted in reference trees
 uv run sdive schema audit|verify                      # the result JSON schemas
 ```
 
 `next` exits with status 3 when the queue is empty. `abandon <id>` releases a
 run's targets; unrecorded runs also expire after 12 hours.
 
-Project scope and areas: `projects/<name>/project.toml`. Lenses:
+Project scope, areas and reference trees (submodules exported read-only for API
+lookup, never audited): `projects/<name>/project.toml`. Lenses:
 `projects/<name>/lenses/<lens>.md` (versioned by content hash).
 
 Development: `uv run pytest`, `uvx ruff check src tests`.

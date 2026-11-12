@@ -243,6 +243,8 @@ def record_(c: Ctx, run_id: int, path: Path | None) -> None:
                 click.echo(f"    {key}")
     if r.dossiers:
         click.echo(f"  dossiers updated: {', '.join(r.dossiers)}")
+    for title in r.upstream:
+        click.echo(f"  upstream note: {title}")
 
 
 @main.command()
@@ -333,6 +335,27 @@ def findings(c: Ctx, project: str, status: str | None) -> None:
     for f in rows:
         t.add_row(f["slug"], f["status"], f["property"] or "", f["attacker"] or "",
                   f["cwe"] or "", f["confidence"] or "", f["title"])
+    console.print(t)
+
+
+@main.command()
+@click.argument("project")
+@click.option("--json", "as_json", is_flag=True, help="Full records as JSON.")
+@pass_ctx
+def upstream(c: Ctx, project: str, as_json: bool) -> None:
+    """List suspected defects noted in external (reference) components."""
+    rows = c.conn.execute(
+        "SELECT * FROM upstream_notes WHERE project = ? ORDER BY id", (project,)
+    ).fetchall()
+    if as_json:
+        _emit_json([dict(r, locations=json.loads(r["locations"])) for r in rows])
+        return
+    t = Table()
+    for col in ("id", "component", "sha", "status", "run", "title"):
+        t.add_column(col)
+    for r in rows:
+        t.add_row(str(r["id"]), r["component"], (r["component_sha"] or "")[:12], r["status"],
+                  str(r["run_id"]), r["title"])
     console.print(t)
 
 

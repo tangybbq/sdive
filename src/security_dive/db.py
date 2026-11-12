@@ -124,6 +124,22 @@ MIGRATIONS: list[str] = [
         note         TEXT
     );
     """,
+    # v2: suspected defects in external (reference) components, for later filing.
+    """
+    CREATE TABLE upstream_notes (
+        id             INTEGER PRIMARY KEY,
+        project        TEXT NOT NULL,
+        run_id         INTEGER NOT NULL REFERENCES runs(id),
+        component      TEXT NOT NULL,
+        component_url  TEXT,
+        component_sha  TEXT,
+        title          TEXT NOT NULL,
+        description    TEXT NOT NULL,
+        locations      TEXT NOT NULL,   -- JSON list of Location
+        status         TEXT NOT NULL DEFAULT 'noted',
+        created_at     TEXT NOT NULL
+    );
+    """,
 ]
 
 

@@ -42,6 +42,20 @@ class Hypothesis(_Strict):
     slug: str | None = Field(default=None, description="Optional short kebab-case id")
 
 
+class UpstreamNote(_Strict):
+    """A suspected defect inside an external (reference) component, e.g. a
+    crypto library. Kept for later triage and filing with that project; never
+    an MCUboot/Zephyr finding."""
+
+    component: str = Field(description="Reference tree path as given in the brief")
+    title: str = Field(max_length=120)
+    description: str = Field(
+        description="The suspected defect in the external code, and how this project "
+        "is or could be affected"
+    )
+    locations: list[Location] = []
+
+
 class DossierNote(_Strict):
     area: str
     text: str = Field(
@@ -57,8 +71,13 @@ class AuditResult(_Strict):
     model: str = Field(description="Model ID the agent is running as")
     summary: str
     units: list[UnitStatus]
-    hypotheses: list[Hypothesis] = []
+    hypotheses: list[Hypothesis] = Field(
+        default=[],
+        description="Defects in this project's code: each needs at least one location "
+        "in an indexed unit. Locations in reference trees may be added as evidence.",
+    )
     dossier: list[DossierNote] = []
+    upstream_notes: list[UpstreamNote] = []
 
 
 class VerifyResult(_Strict):
@@ -78,6 +97,7 @@ class VerifyResult(_Strict):
     revised_title: str | None = None
     revised_claim: str | None = None
     dossier: list[DossierNote] = []
+    upstream_notes: list[UpstreamNote] = []
 
     @model_validator(mode="after")
     def _check(self) -> VerifyResult:

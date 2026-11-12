@@ -12,6 +12,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from . import repo
 from .config import Config, ConfigError, Project
 from .schemas import AuditResult, VerifyResult
 from .units import Unit
@@ -265,6 +266,22 @@ def _finding_locations(conn: sqlite3.Connection, finding_id: int) -> list[dict]:
     ]
 
 
+REFERENCE_NOTE = (
+    "Reference trees are external components (e.g. crypto libraries) for establishing "
+    "API contracts: search their headers rather than reading them whole, and do not "
+    "audit them. Claims that depend on a library's behaviour should name the version "
+    "relied on. A defect inside a reference tree goes in upstream_notes, not hypotheses."
+)
+
+
+def _snapshot_references(conn: sqlite3.Connection, cfg: Config, run: sqlite3.Row) -> list[dict]:
+    snap = conn.execute("SELECT sha FROM snapshots WHERE id = ?", (run["snapshot_id"],)).fetchone()
+    if snap is None:
+        return []
+    tree = cfg.snapshot_path(run["project"], snap["sha"])
+    return repo.read_marker(tree).get("references", [])
+
+
 def brief(conn: sqlite3.Connection, cfg: Config, run_id: int) -> dict:
     """Everything a subagent needs for one run, as JSON-able data."""
     run = get_run(conn, run_id)
@@ -283,6 +300,15 @@ def brief(conn: sqlite3.Connection, cfg: Config, run_id: int) -> dict:
         "result_path": str(cfg.staging / f"run-{run_id}.json"),
         "result_schema": "verify" if run["kind"] == "verify" else "audit",
     }
+    refs = _snapshot_references(conn, cfg, run)
+    if refs:
+        tree = cfg.snapshot_path(project.name, snap["sha"])
+        out["references"] = [
+            {"path": str(tree / r["path"]), "repo_path": r["path"], "name": r["name"],
+             "sha": r["sha"], "role": r["role"]}
+            for r in refs
+        ]
+        out["reference_note"] = REFERENCE_NOTE
     if run["lens_id"] is not None:
         lens = conn.execute("SELECT * FROM lenses WHERE id = ?", (run["lens_id"],)).fetchone()
         path = lens_path(project, lens["name"])
@@ -338,6 +364,7 @@ class RecordReport:
     findings: list[str] = field(default_factory=list)
     verdict: str | None = None
     dossiers: list[str] = field(default_factory=list)
+    upstream: list[str] = field(default_factory=list)
 
 
 def _slugify(text: str) -> str:
@@ -404,6 +431,12 @@ def record(conn: sqlite3.Connection, cfg: Config, run_id: int, data: dict) -> Re
             project.area_named(note.area)
     except ConfigError as e:
         raise LedgerError(str(e)) from None
+    refs = {r["path"]: r for r in _snapshot_references(conn, cfg, run)}
+    for un in result.upstream_notes:
+        if un.component not in refs:
+            known = ", ".join(sorted(refs)) or "none"
+            raise LedgerError(f"upstream note component {un.component!r} is not a reference "
+                              f"tree of this snapshot (known: {known})")
 
     report = RecordReport(run_id, run["kind"])
     with conn:
@@ -411,6 +444,16 @@ def record(conn: sqlite3.Connection, cfg: Config, run_id: int, data: dict) -> Re
             _record_audit(conn, run, result, report)
         else:
             _record_verify(conn, run, result, report)
+        for un in result.upstream_notes:
+            ref = refs[un.component]
+            conn.execute(
+                "INSERT INTO upstream_notes (project, run_id, component, component_url, "
+                "component_sha, title, description, locations, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (project.name, run_id, un.component, ref.get("url"), ref.get("sha"), un.title,
+                 un.description, json.dumps([loc.model_dump() for loc in un.locations]), now()),
+            )
+            report.upstream.append(un.title)
         conn.execute(
             "UPDATE runs SET status = 'recorded', model = ?, summary = ?, finished_at = ? "
             "WHERE id = ?",
@@ -463,6 +506,12 @@ def _record_audit(conn, run, result: AuditResult, report: RecordReport) -> None:
     report.missing = sorted(targets - reported.keys())
 
     for h in result.hypotheses:
+        units_hit = [_unit_at(conn, snap, loc.path, loc.start_line) for loc in h.locations]
+        if not any(units_hit):
+            raise LedgerError(
+                f"hypothesis {h.title!r} has no location in indexed {run['project']} code; "
+                "a defect inside an external component belongs in upstream_notes"
+            )
         slug = _unique_slug(conn, _slugify(h.slug or h.title))
         ts = now()
         fid = conn.execute(
@@ -473,11 +522,10 @@ def _record_audit(conn, run, result: AuditResult, report: RecordReport) -> None:
             (run["project"], slug, h.title, h.claim, h.auditor_notes, h.confidence,
              h.property, h.attacker, h.cwe, snap, run["id"], ts, ts),
         ).fetchone()[0]
-        for loc in h.locations:
+        for loc, unit_id in zip(h.locations, units_hit, strict=True):
             conn.execute(
                 "INSERT INTO finding_locations VALUES (?, ?, ?, ?, ?, ?)",
-                (fid, loc.path, loc.start_line, loc.end_line, loc.symbol,
-                 _unit_at(conn, snap, loc.path, loc.start_line)),
+                (fid, loc.path, loc.start_line, loc.end_line, loc.symbol, unit_id),
             )
         _event(conn, fid, run["id"], None, "hypothesis", f"raised by {run['kind']} run")
         report.findings.append(slug)

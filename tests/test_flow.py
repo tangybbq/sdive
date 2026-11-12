@@ -166,3 +166,62 @@ def test_changed_function_loses_coverage(cfg, indexed, upstream):
     ledger.abandon(conn, run2)
     run3 = ledger.next_unit_run(conn, p, snap2, "sweep", "memory")
     assert len(ledger.brief(conn, cfg, run3)["targets"]) == 4
+
+
+def test_references_exported_not_indexed(cfg, indexed):
+    p, conn, snap, _sha, tree = indexed
+    lib = tree / "ext" / "lib"
+    assert (lib / "include" / "lib.h").is_file()
+    assert (lib / "library" / "lib.c").is_file()
+    assert not (lib / "tests").exists()  # not in export
+    assert (lib / "core" / "src" / "core.c").is_file()  # nested submodule
+    refs = repo.read_marker(tree)["references"]
+    assert [(r["path"], r["name"]) for r in refs] == [("ext/lib", "vendor/lib"),
+                                                      ("ext/lib/core", "core")]
+    # ext/** is in scope by glob, but reference trees are never indexed.
+    n = conn.execute("SELECT count(*) FROM units WHERE path LIKE 'ext/%'").fetchone()[0]
+    assert n == 0
+    assert p.is_reference("ext/lib/core/src/core.c")
+
+
+def test_hypothesis_needs_project_location_and_upstream_notes(cfg, indexed):
+    p, conn, snap, _sha, _tree = indexed
+    run = ledger.next_unit_run(conn, p, snap, "dive", "memory")
+    b = ledger.brief(conn, cfg, run)
+    assert [r["repo_path"] for r in b["references"]] == ["ext/lib", "ext/lib/core"]
+    assert "upstream_notes" in b["reference_note"]
+
+    in_lib = {**HYP, "locations": [{"path": "ext/lib/library/lib.c", "start_line": 1}]}
+    with pytest.raises(ledger.LedgerError, match="upstream_notes"):
+        ledger.record(conn, cfg, run, audit(run, [], [in_lib]))
+
+    note = {"component": "ext/lib", "title": "lib_parse reads b[n]",
+            "description": "off by one in the library",
+            "locations": [{"path": "ext/lib/library/lib.c", "start_line": 1}]}
+    bad = audit(run, [])
+    bad["upstream_notes"] = [{**note, "component": "ext/nope"}]
+    with pytest.raises(ledger.LedgerError, match="not a reference tree"):
+        ledger.record(conn, cfg, run, bad)
+
+    # A project location plus a library location as evidence is fine.
+    mixed = {**HYP, "locations": [{"path": "src/parser.c", "start_line": 13},
+                                  {"path": "ext/lib/library/lib.c", "start_line": 1}]}
+    good = audit(run, [], [mixed])
+    good["upstream_notes"] = [note]
+    rep = ledger.record(conn, cfg, run, good)
+    assert rep.upstream == ["lib_parse reads b[n]"]
+    row = conn.execute("SELECT component, component_sha, status FROM upstream_notes").fetchone()
+    assert row["component"] == "ext/lib" and row["status"] == "noted"
+    assert len(row["component_sha"]) == 40
+
+
+def test_snapshot_rebuilt_when_reference_layout_changes(root, cfg, indexed):
+    p, _conn, _snap, sha, tree = indexed
+    pt = root / "projects" / "demo" / "project.toml"
+    pt.write_text(pt.read_text().replace('export = ["include", "library"]',
+                                         'export = ["include", "library", "tests"]'))
+    from security_dive.config import load_config
+    cfg2 = load_config(root / "config.toml")
+    tree2 = repo.snapshot(cfg2, cfg2.project("demo"), sha)
+    assert tree2 == tree
+    assert (tree / "ext" / "lib" / "tests" / "t.c").is_file()

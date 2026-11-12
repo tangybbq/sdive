@@ -61,6 +61,32 @@ class Area:
 
 
 @dataclass(frozen=True)
+class Reference:
+    """A submodule exported into snapshots for agents to *consult* (API
+    contracts), never indexed, covered, or the location of a finding."""
+
+    path: str  # relative to the parent tree (the project, or the parent reference)
+    role: str = ""
+    export: tuple[str, ...] = ()  # subpaths to export; empty = the whole tree
+    nested: tuple[Reference, ...] = ()
+
+    def as_dict(self) -> dict:
+        return {
+            "path": self.path,
+            "export": list(self.export),
+            "nested": [n.as_dict() for n in self.nested],
+        }
+
+
+def _flat_reference_paths(refs: tuple[Reference, ...], prefix: str = "") -> list[str]:
+    out = []
+    for r in refs:
+        out.append(prefix + r.path)
+        out.extend(_flat_reference_paths(r.nested, prefix + r.path + "/"))
+    return out
+
+
+@dataclass(frozen=True)
 class Project:
     name: str
     github: str
@@ -73,13 +99,21 @@ class Project:
     exclude: tuple[str, ...]
     areas: tuple[Area, ...]
     default_area: Area
+    references: tuple[Reference, ...] = ()
 
     @property
     def lenses_dir(self) -> Path:
         return self.defdir / "lenses"
 
+    @property
+    def reference_paths(self) -> list[str]:
+        return _flat_reference_paths(self.references)
+
+    def is_reference(self, path: str) -> bool:
+        return any(path == r or path.startswith(r + "/") for r in self.reference_paths)
+
     def in_scope(self, path: str) -> bool:
-        if not path.endswith(SOURCE_EXTS):
+        if not path.endswith(SOURCE_EXTS) or self.is_reference(path):
             return False
         if not any(glob_match(g, path) for g in self.include):
             return False
@@ -148,6 +182,15 @@ def _path(root: Path, value: str | None) -> Path | None:
     return p if p.is_absolute() else (root / p).resolve()
 
 
+def _load_reference(raw: dict) -> Reference:
+    return Reference(
+        path=raw["path"].strip("/"),
+        role=raw.get("role", ""),
+        export=tuple(p.strip("/") for p in raw.get("export", ())),
+        nested=tuple(_load_reference(n) for n in raw.get("nested", ())),
+    )
+
+
 def _load_project(root: Path, name: str, raw: dict) -> Project:
     defdir = root / "projects" / name
     deffile = defdir / "project.toml"
@@ -186,6 +229,7 @@ def _load_project(root: Path, name: str, raw: dict) -> Project:
         exclude=tuple(scope.get("exclude", ())),
         areas=areas,
         default_area=default_area,
+        references=tuple(_load_reference(r) for r in spec.get("reference", ())),
     )
 
 

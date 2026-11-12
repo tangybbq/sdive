@@ -81,6 +81,27 @@ SQLite at `analysis/sdive.db`.
   that area; updated after each pass. This is what suppresses repeat false
   positives and what makes change review cheap.
 
+## Reference trees and upstream notes
+
+External components a project builds against (MCUboot: the `ext/mbedtls-3.6.0`
+and `ext/mbedtls-4.1.0` submodules, plus 4.1's nested `tf-psa-crypto`) are
+exported into snapshots as **reference trees**: agents consult them to settle
+API contracts, but they are never indexed, never counted in coverage, and never
+the location of a finding. `sdive record` rejects a hypothesis with no location
+in indexed project code. Claims that depend on library behaviour name the version
+relied on (Zephyr builds use Zephyr's own crypto modules, not MCUboot's pins).
+
+A defect noticed *inside* a reference tree is recorded as an **upstream note**
+(`upstream_notes` table, `sdive upstream`), with the component's URL and pinned
+commit. This will matter much more for Zephyr, which pulls in many external
+modules via west; tracking and filing upstream notes is future work. Code a
+project vendors directly (MCUboot's `ext/tinycrypt`, `fiat`, `mbedtls-asn1`,
+`nrf`) is *not* a reference tree: the project ships it, so it is audit scope
+(a later tier).
+
+For Zephyr, reference trees will come from `west.yml` projects rather than
+`.gitmodules`.
+
 ## Repos and confidentiality
 
 - **Never touch the user's checkouts.** Each project gets a private mirror at
@@ -126,8 +147,8 @@ Notes from building it:
 - **Unit keys** are `path::func`, with `@2`, `@3` for `#if` variants in line
   order. Function hashes cover the original lines, so a change in any branch
   invalidates the unit.
-- **Snapshots** are `git archive` exports, so submodules (e.g. `ext/mbedtls`)
-  are not included.
+- **Snapshots** are `git archive` exports. Submodules are included only when
+  listed as reference trees (below).
 - **Dive batching**: a dive run takes the uncovered functions of one file
   (highest priority first, capped at 40); a sweep takes every uncovered
   function in scope or in one area.
