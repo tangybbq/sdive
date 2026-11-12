@@ -5,10 +5,14 @@ per item, with `disclosure.json` and/or `result.json`) into
 `analysis/truth/<project>/<name>.json`. That directory must never be readable
 by analysis agents (see .claude/settings.json); the report is for humans.
 
-Matching is deliberately simple and shown, not hidden: a finding matches a
-truth item at strength "unit" (a location in the same function as the item's
-site), "near" (same file, within NEAR_LINES of the site), or "file" (same file
-only). Only unit/near matches count as "raised"; a reviewer confirms them.
+Location matching is deliberately simple and shown, not hidden: a finding is
+a *candidate* for a truth item at strength "unit" (a location in the same
+function as the item's site), "near" (same file, within NEAR_LINES of the
+site), or "file" (same file only). A candidate is not a hit: large functions
+hold several unrelated bugs. A human judges which findings actually raise each
+item (`sdive bench judge`), stored per round in the ledger's
+`adjudication.json`; only judged matches count as raised. Unit/near candidates
+on unjudged items are reported as awaiting judgement.
 """
 
 from __future__ import annotations
@@ -102,6 +106,33 @@ def save_truth(cfg: Config, project: str, name: str, corpus_dirs: list[Path]) ->
     return data
 
 
+def adjudication_path(cfg: Config) -> Path:
+    return cfg.ledger_dir / "adjudication.json"
+
+
+def load_judgments(cfg: Config, name: str) -> dict:
+    """{item_id: {"slugs": [...], "note": str|None, "at": iso}} for truth set `name`."""
+    path = adjudication_path(cfg)
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text()).get(name, {}).get("items", {})
+
+
+def judge(cfg: Config, name: str, item_id: str, slugs: list[str] | None,
+          note: str | None = None) -> None:
+    """Record which findings raise `item_id` ([] = none of them); None clears it."""
+    path = adjudication_path(cfg)
+    data = json.loads(path.read_text()) if path.exists() else {}
+    items = data.setdefault(name, {}).setdefault("items", {})
+    if slugs is None:
+        items.pop(item_id, None)
+    else:
+        items[item_id] = {"slugs": sorted(set(slugs)), "note": note,
+                          "at": datetime.now(UTC).isoformat(timespec="seconds")}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
 def _resolve(path: str, known: set[str]) -> str | None:
     """Map a possibly partial path ("image_validate.c", "boot/x/.../y.c") onto
     one indexed path, if unambiguous."""
@@ -115,7 +146,9 @@ def _resolve(path: str, known: set[str]) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def report(conn: sqlite3.Connection, project: str, snap: int, truth: dict) -> dict:
+def report(conn: sqlite3.Connection, project: str, snap: int, truth: dict,
+           judgments: dict | None = None) -> dict:
+    judgments = judgments or {}
     files = {
         r["path"]: r
         for r in conn.execute(
@@ -146,6 +179,7 @@ def report(conn: sqlite3.Connection, project: str, snap: int, truth: dict) -> di
 
     from .ledger import _unit_at  # local: ledger imports nothing from here
 
+    status = {f["slug"]: f["status"] for f in findings}
     rows, matched_findings = [], set()
     for item in truth["items"]:
         resolved = [p for p in (_resolve(f, set(files)) for f in item["files"]) if p]
@@ -174,10 +208,13 @@ def report(conn: sqlite3.Connection, project: str, snap: int, truth: dict) -> di
                     best = "file"
             if best:
                 matches.append({"slug": f["slug"], "status": f["status"], "strength": best})
-                if best in RAISED:
-                    matched_findings.add(f["slug"])
         rank = {"unit": 0, "near": 1, "file": 2}
         matches.sort(key=lambda m: rank[m["strength"]])
+        judged = judgments.get(item["id"])
+        hits = None
+        if judged is not None:
+            hits = [{"slug": s, "status": status.get(s, "missing")} for s in judged["slugs"]]
+            matched_findings.update(judged["slugs"])
         rows.append({
             "id": item["id"], "verdict": item["verdict"], "cwe": item.get("cwe"),
             # The site, when given, is authoritative for scope: a port bug whose
@@ -185,25 +222,39 @@ def report(conn: sqlite3.Connection, project: str, snap: int, truth: dict) -> di
             "title": item["title"], "examined": examined,
             "in_scope": bool(site_path) if site else bool(resolved),
             "matches": matches,
+            # None: not judged yet; []: judged, no finding raises it.
+            "hits": hits,
+            "judge_note": judged.get("note") if judged else None,
         })
 
     def summarize(verdict: str) -> dict:
         scoped = [r for r in rows if r["verdict"] == verdict and r["in_scope"]]
-        raised = [r for r in scoped if any(m["strength"] in RAISED for m in r["matches"])]
-        confirmed = [r for r in raised if any(
-            m["strength"] in RAISED and m["status"] in CONFIRMED for m in r["matches"])]
-        rejected = [r for r in raised if r not in confirmed and all(
-            m["status"] == "rejected" for m in r["matches"] if m["strength"] in RAISED)]
+        raised = [r for r in scoped if r["hits"]]
+        confirmed = [r for r in raised if any(h["status"] in CONFIRMED for h in r["hits"])]
+        rejected = [r for r in raised if all(h["status"] == "rejected" for h in r["hits"])]
+        pending = [r for r in scoped if r["hits"] is None
+                   and any(m["strength"] in RAISED for m in r["matches"])]
         return {"in_scope": len(scoped), "raised": len(raised), "confirmed": len(confirmed),
-                "rejected": len(rejected)}
+                "rejected": len(rejected), "pending": len(pending)}
+
+    candidate_for: dict[str, list[str]] = {}
+    for r in rows:
+        if r["hits"] is None:
+            for m in r["matches"]:
+                if m["strength"] in RAISED:
+                    candidate_for.setdefault(m["slug"], []).append(r["id"])
 
     return {
         "truth": truth["name"],
         "items": rows,
         "summary": {v: summarize(v) for v in ("tp", "fp", "unclear")},
         "out_of_scope": sum(not r["in_scope"] for r in rows),
+        # Everything not judged to raise some item: new bugs, false positives,
+        # or matches still to be judged (candidate_for names the items).
         "unmatched_findings": [
-            {"slug": f["slug"], "status": f["status"], "title": f["title"]}
+            {"slug": f["slug"], "status": f["status"], "title": f["title"],
+             "candidate_for": candidate_for.get(f["slug"], [])}
             for f in findings if f["slug"] not in matched_findings
         ],
+        "unknown_judged_items": sorted(set(judgments) - {r["id"] for r in rows}),
     }

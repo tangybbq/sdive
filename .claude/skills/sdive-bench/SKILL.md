@@ -29,6 +29,15 @@ ledger directory under `analysis/ledgers/` — rounds start clean), `--dives`
 4. **Verify:** follow the /sdive-verify procedure with `--ledger <round>` and
    `all`.
 5. **Score:** `uv run sdive --ledger <round> bench report <project> <truth-set> --rev <rev>`.
+6. **Judge (with the user):** the report's location matches are only
+   *candidates* — a finding in the same function as a truth item may be a
+   different bug. Only judged matches count as raised. For each item with
+   candidates, compare the finding's claim (`sdive finding show <slug>`) with
+   the item title, propose a judgement to the user, and record the ones they
+   agree with:
+   `uv run sdive --ledger <round> bench judge <project> <truth-set> <item> <slug>...`
+   (or `--none`; `--note` for the reason). Then re-run the report. Judgements
+   live in the round's `adjudication.json`.
 
 Steps 2–4 can take many runs. Report progress briefly after each step; if the
 user stops partway, the ledger keeps everything done so far and the round can be
@@ -36,10 +45,11 @@ resumed with the same `--round`.
 
 ## Report to the user
 
-- Recall: validated bugs in scope raised / confirmed by the verifier.
-- Traps: refuted claims raised, wrongly confirmed, correctly rejected.
-- Findings matching no truth item — these need human review: they may be new
-  bugs (still present on `main`?) or false positives.
+- Recall: validated bugs in scope raised / confirmed by the verifier (judged).
+- Traps: refuted claims raised, wrongly confirmed, correctly rejected (judged).
+- Items still awaiting judgement, if any.
+- Findings not judged to raise any truth item — these need human review: they
+  may be new bugs (still present on `main`?) or false positives.
 - For each missed validated bug: whether its code was examined (the `examined`
   column) — "not examined" is a coverage gap, "examined but not raised" is a
   lens/prompt gap.

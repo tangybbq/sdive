@@ -149,9 +149,12 @@ Notes from building it:
   invalidates the unit.
 - **Snapshots** are `git archive` exports. Submodules are included only when
   listed as reference trees (below).
-- **Dive batching**: a dive run takes the uncovered functions of one file
-  (highest priority first, capped at 40); a sweep takes every uncovered
-  function in scope or in one area.
+- **Batching**: a dive run takes the uncovered functions of one file
+  (highest priority first, capped at 40 functions / 600 lines); a sweep takes
+  whole areas in priority order up to ~3000 lines (one area at least). Runs are
+  the unit of cost and of stopping: skills take a run count, `sdive todo`
+  estimates the runs left per lens, and coverage carries across sessions
+  (interrupted runs are recorded or abandoned at the start of the next).
 
 ### Phase 1 — MCUboot calibration
 Write the auditor/verifier agents and the first lenses. **Recall benchmark:** run
@@ -185,11 +188,26 @@ Built (tooling); the benchmark rounds themselves run in a Mythos session:
   lenses worked. Not covered by deny rules: subprocesses (agents have no Bash).
 - **Rounds** use disposable ledgers (`--ledger bench-...`), so prompt changes are
   measured in fresh rounds and nothing leaks into `main`.
+- **Scoring** is by human judgement: location matches (same function, near,
+  same file) are only candidates; `sdive bench judge` records which findings
+  really raise each truth item, per round, in the ledger's `adjudication.json`.
+
+Round 1 (2026-11-12, Mythos, partial: one memory-safety sweep pass + 10
+holistic dives + verification of all 28 hypotheses). By manual reading, 6 of
+13 in-scope validated bugs were raised and confirmed; no refuted trap was
+raised as the same claim (one close call left for judgement); about a dozen
+further verified findings match no truth item and need review against `main`.
+Every miss was examined only by the single sweep (no dives reached those
+areas); half of them are outside the memory-safety lens's class, and the rest
+suggested one sweep over all 423 functions was too thin (125 came back
+partial). Changes since: judged scoring, area-batched sweeps, narrow finding
+locations in the auditor prompt. Not re-measured, to save usage; Phase 2
+starts on `main` instead.
 
 ### Phase 2 — MCUboot deep dive at `main`
 Core scope: `boot/bootutil` + `boot/boot_serial` + `boot/zephyr` (~25k lines,
 fits comfortably in context).
-1. **Sweeps** — one auditor per lens over the whole core source.
+1. **Sweeps** — each focused lens over the core source, a few areas per run.
 2. **Entry-point dives** — image header/TLV parsing, serial recovery/SMP,
    swap-status and trailer reads, encrypted-key unwrap, `ext/` crypto glue.
 3. **Verification** — every hypothesis gets an independent blind verifier.

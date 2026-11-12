@@ -11,10 +11,22 @@ only thing that touches the ledger.
 
 ## Arguments
 
-`<project>` (required); a count `N` (default 1) or `all`; `--lens` (default
+`<project>` (required); a count `N` (default 1) or `all` — the number of runs
+to do before stopping, which is how the user bounds the cost of a session
+(each run is at most one file's worth, ≤600 lines); `--lens` (default
 `holistic`); optional `--area`, `--rev` (default: the project's default branch);
 `--ledger` (default `main`). Every `sdive` command below is
 `uv run sdive --ledger <ledger> ...`, run from the repo root.
+
+## Before the loop: interrupted runs
+
+A session stopped mid-run leaves runs `started`; their targets stay leased
+(skipped by `next`) for 12 hours. Unless the user says another session is
+working on this ledger right now, tidy them first:
+`uv run sdive --ledger <ledger> runs <project> --status started --limit 0`.
+For each one of this skill's kind, run `uv run sdive --ledger <ledger> record <id>`
+(the agent may have finished writing its result); if that says there is no
+result file, `uv run sdive --ledger <ledger> abandon <id>`.
 
 ## Loop (repeat N times, or until the queue is empty)
 
@@ -42,9 +54,11 @@ the user asked for speed. Default is one at a time.
 
 ## Finish
 
-Run `uv run sdive --ledger <ledger> coverage <project>` and give a short summary:
-runs done, hypotheses raised (titles), anything abandoned. Suggest `/sdive-verify`
-if there are new hypotheses.
+Run `uv run sdive --ledger <ledger> todo <project> --lens <lens>` and give a short
+summary: runs done, hypotheses raised (titles), anything abandoned, and the
+dive runs left. Suggest `/sdive-verify` if there are new hypotheses. Stopping
+is always safe: coverage is recorded per run, so the next session picks up
+where this one ended.
 
 ## Invariants
 

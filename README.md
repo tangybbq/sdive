@@ -17,11 +17,17 @@ Analysis runs interactively as Claude Code skills (start a session with the
 model you want, e.g. Mythos):
 
 ```
-/sdive-sweep mcuboot all                    # one pass per focused lens
+uv run sdive todo mcuboot                   # runs left per lens: pick a batch size
+/sdive-sweep mcuboot memory-safety 2        # 2 sweep runs (a few areas each)
 /sdive-dive mcuboot 10                      # 10 deep-dive runs (holistic lens)
 /sdive-verify mcuboot all                   # blind verification of hypotheses
 /sdive-bench mcuboot vanessa --rev 511dc9e2 # calibration round in a fresh ledger
 ```
+
+The count is the stopping point. Coverage is recorded per run, so the next
+session continues where the last one stopped, as long as the code and the lens
+are unchanged: a changed function, or an edited lens file, puts that work back
+in the queue (agent prompt edits do not).
 
 The loop underneath:
 
@@ -31,6 +37,7 @@ uv run sdive next mcuboot --kind dive --lens <lens>   # starts a run, prints the
 uv run sdive record <id>                              # validate + apply to the ledger
 uv run sdive next mcuboot --kind verify               # blind verification of a hypothesis
 uv run sdive findings mcuboot
+uv run sdive --ledger <round> bench judge mcuboot vanessa <item> <slug>...  # score a round
 uv run sdive upstream mcuboot                         # defects noted in reference trees
 uv run sdive schema audit|verify                      # the result JSON schemas
 ```

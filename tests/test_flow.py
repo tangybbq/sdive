@@ -287,3 +287,24 @@ def test_dive_batch_respects_line_budget(cfg, indexed):
     run2 = ledger.next_unit_run(conn, p, snap, "dive", "memory", max_lines=1)
     assert [t["key"] for t in ledger.brief(conn, cfg, run2)["targets"]] == [
         "src/parser.c::parse@2"]
+
+
+def test_sweep_batches_whole_areas_and_estimate(cfg, indexed):
+    p, conn, snap, _sha, _tree = indexed
+    # parsing (parser.c, 9 lines in 3 functions) outranks misc (util.c, 4 lines).
+    est = ledger.queue_estimate(conn, p, snap, "sweep", "memory", max_lines=10)
+    assert [(r["areas"], r["functions"], r["lines"]) for r in est] == [
+        (["parsing"], 3, 9), (["misc"], 1, 4)]
+    assert len(ledger.queue_estimate(conn, p, snap, "sweep", "memory")) == 1
+    assert [r["paths"] for r in ledger.queue_estimate(conn, p, snap, "dive", "memory")] == [
+        ["src/parser.c"], ["src/util.c"]]
+
+    run = ledger.next_unit_run(conn, p, snap, "sweep", "memory", max_lines=10)
+    keys = [t["key"] for t in ledger.brief(conn, cfg, run)["targets"]]
+    assert keys == ["src/parser.c::check_len", "src/parser.c::parse", "src/parser.c::parse@2"]
+    # Leased targets drop out of the estimate, as they do from `next`.
+    assert [r["areas"] for r in ledger.queue_estimate(conn, p, snap, "sweep", "memory")] == [
+        ["misc"]]
+    # An area larger than the budget still goes whole.
+    run2 = ledger.next_unit_run(conn, p, snap, "sweep", "memory", max_lines=1)
+    assert [t["key"] for t in ledger.brief(conn, cfg, run2)["targets"]] == ["src/util.c::helper"]

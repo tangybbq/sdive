@@ -71,11 +71,34 @@ def test_import_and_report(tmp_path, cfg):
     assert rows["001"]["examined"] == "yes"
     assert rows["001"]["matches"][0] == {
         "slug": "buf-0-read-with-len-0", "status": "verified", "strength": "unit"}
+    assert rows["001"]["hits"] is None
     assert rows["002"]["in_scope"] and rows["002"]["examined"] == "0/1"
     assert not rows["003"]["in_scope"]
-    assert r["summary"]["tp"] == {"in_scope": 1, "raised": 1, "confirmed": 1, "rejected": 0}
-    assert r["summary"]["fp"]["raised"] == 0
+    # Unjudged: a unit-level candidate is not a hit, only awaiting judgement.
+    assert r["summary"]["tp"] == {"in_scope": 1, "raised": 0, "confirmed": 0, "rejected": 0,
+                                  "pending": 1}
     assert r["out_of_scope"] == 1
-    # "something new" is in the same file as the unclear own-finding (file-only
-    # match, not "raised"), so it is reported as unmatched for review.
+    unmatched = {f["slug"]: f["candidate_for"] for f in r["unmatched_findings"]}
+    # "something new" is also in parse@2's file but outside the function, so
+    # it's not a candidate for 001.
+    assert unmatched == {"buf-0-read-with-len-0": ["001"], "something-new": []}
+
+    bench.judge(b, "t", "001", ["buf-0-read-with-len-0"], note="same bug")
+    bench.judge(b, "t", "002", [])
+    assert bench.adjudication_path(b).parent == b.ledger_dir
+    r = bench.report(conn, "demo", snap, data, bench.load_judgments(b, "t"))
+    rows = {row["id"]: row for row in r["items"]}
+    assert rows["001"]["hits"] == [{"slug": "buf-0-read-with-len-0", "status": "verified"}]
+    assert rows["001"]["judge_note"] == "same bug" and rows["002"]["hits"] == []
+    assert r["summary"]["tp"] == {"in_scope": 1, "raised": 1, "confirmed": 1, "rejected": 0,
+                                  "pending": 0}
+    assert r["summary"]["fp"]["raised"] == 0 and r["summary"]["fp"]["pending"] == 0
     assert [f["slug"] for f in r["unmatched_findings"]] == ["something-new"]
+
+    # A judgement can name a finding located elsewhere; clearing restores pending.
+    bench.judge(b, "t", "002", ["something-new"])
+    bench.judge(b, "t", "001", None)
+    r = bench.report(conn, "demo", snap, data, bench.load_judgments(b, "t"))
+    assert r["summary"]["fp"]["raised"] == 1 and r["summary"]["fp"]["confirmed"] == 0
+    assert r["summary"]["tp"]["pending"] == 1
+    assert bench.load_judgments(cfg, "t") == {}  # main ledger is separate

@@ -190,6 +190,45 @@ def _start_run(
     return run_id
 
 
+DIVE_MAX_LINES = 600
+SWEEP_MAX_LINES = 3000
+
+
+def _batch(rows: list, kind: str, max_units: int, max_lines: int | None) -> list:
+    """The targets of the next run, from uncovered `rows` in queue order.
+
+    A dive takes uncovered functions of one file (the first with work left), in
+    line order, up to `max_units` functions and `max_lines` lines, so each dive
+    stays deep. A sweep takes whole areas in priority order up to `max_lines`
+    lines, so cross-file reasoning within an area is kept while one pass stays
+    small enough to read properly. Both always take at least one unit/area.
+    """
+    def size(r) -> int:
+        return r["end_line"] - r["start_line"] + 1
+    if kind == "dive":
+        limit = max_lines or DIVE_MAX_LINES
+        path = rows[0]["path"]
+        batch, lines = [], 0
+        for r in (r for r in rows if r["path"] == path):
+            if batch and (len(batch) >= max_units or lines + size(r) > limit):
+                break
+            batch.append(r)
+            lines += size(r)
+        return batch
+    limit = max_lines or SWEEP_MAX_LINES
+    areas: dict[str, list] = {}
+    for r in rows:
+        areas.setdefault(r["area"], []).append(r)
+    batch, lines = [], 0
+    for members in areas.values():
+        n = sum(size(r) for r in members)
+        if batch and lines + n > limit:
+            break
+        batch.extend(members)
+        lines += n
+    return batch
+
+
 def next_unit_run(
     conn: sqlite3.Connection,
     project: Project,
@@ -198,16 +237,10 @@ def next_unit_run(
     lens: str,
     area: str | None = None,
     max_units: int = 40,
-    max_lines: int = 600,
+    max_lines: int | None = None,
 ) -> int | None:
-    """Start a sweep or dive run on the highest-priority uncovered work.
-
-    A dive targets uncovered functions of one file (the highest-priority file
-    with work left), in line order, up to `max_units` functions and `max_lines`
-    total lines (always at least one function), so each dive stays deep. A
-    sweep targets every uncovered function in scope (or in `area`), since it
-    reads the whole source anyway.
-    """
+    """Start a sweep or dive run on the highest-priority uncovered work (see
+    `_batch` for how much one run takes)."""
     if kind not in UNIT_KINDS:
         raise LedgerError(f"not a unit run kind: {kind}")
     if area is not None:
@@ -216,17 +249,38 @@ def next_unit_run(
     rows = _uncovered_units(conn, project.name, snap, lens_id, kind, area)
     if not rows:
         return None
-    if kind == "dive":
-        path = rows[0]["path"]
-        batch, lines = [], 0
-        for r in (r for r in rows if r["path"] == path):
-            size = r["end_line"] - r["start_line"] + 1
-            if batch and (len(batch) >= max_units or lines + size > max_lines):
-                break
-            batch.append(r)
-            lines += size
-        rows = batch
+    rows = _batch(rows, kind, max_units, max_lines)
     return _start_run(conn, project, kind, snap, lens_id, unit_ids=[r["id"] for r in rows])
+
+
+def queue_estimate(
+    conn: sqlite3.Connection,
+    project: Project,
+    snap: int,
+    kind: str,
+    lens: str,
+    area: str | None = None,
+    max_units: int = 40,
+    max_lines: int | None = None,
+) -> list[dict]:
+    """Simulate the queue: the runs `next` would hand out, in order, until the
+    work under (kind, lens) is done. Leased targets are excluded, as in `next`."""
+    if area is not None:
+        project.area_named(area)
+    lens_id = register_lens(conn, project, lens)
+    rows = list(_uncovered_units(conn, project.name, snap, lens_id, kind, area))
+    runs = []
+    while rows:
+        batch = _batch(rows, kind, max_units, max_lines)
+        taken = {r["id"] for r in batch}
+        runs.append({
+            "areas": list(dict.fromkeys(r["area"] for r in batch)),
+            "paths": list(dict.fromkeys(r["path"] for r in batch)),
+            "functions": len(batch),
+            "lines": sum(r["end_line"] - r["start_line"] + 1 for r in batch),
+        })
+        rows = [r for r in rows if r["id"] not in taken]
+    return runs
 
 
 def next_verify_run(conn: sqlite3.Connection, project: Project) -> int | None:

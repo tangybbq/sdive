@@ -13,6 +13,16 @@ puts in the brief.
 
 `<project>`; a count `N` (default 1) or `all`; `--ledger` (default `main`).
 
+## Before the loop: interrupted runs
+
+A session stopped mid-run leaves runs `started`; their targets stay leased
+(skipped by `next`) for 12 hours. Unless the user says another session is
+working on this ledger right now, tidy them first:
+`uv run sdive --ledger <ledger> runs <project> --status started --limit 0`.
+For each one of this skill's kind, run `uv run sdive --ledger <ledger> record <id>`
+(the agent may have finished writing its result); if that says there is no
+result file, `uv run sdive --ledger <ledger> abandon <id>`.
+
 ## Loop
 
 1. `uv run sdive --ledger <ledger> next <project> --kind verify`

@@ -56,6 +56,13 @@ but never raise vague concerns with no attacker path. Write `claim` so that a
 verifier who sees only the claim and the locations can check it; put your
 private reasoning and doubts in `auditor_notes`.
 
+**Locations are pinpoints, not context.** Each location's
+`start_line`–`end_line` should cover the defective statement(s) — the
+unchecked copy, the missing bound, the wrong index — usually a few lines, not
+the enclosing function. Give the defect site first, then any other places the
+claim depends on (where the bad value enters, where a check is missing), each
+narrow. Describe the wider path in `claim` rather than with a large range.
+
 **Unit status** is a coverage record, so be honest: `clean` (examined under the
 lens, nothing found), `hypotheses` (examined, raised at least one), `partial`
 (not examined thoroughly enough to count). Report every target you examined;
