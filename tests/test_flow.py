@@ -225,3 +225,41 @@ def test_snapshot_rebuilt_when_reference_layout_changes(root, cfg, indexed):
     tree2 = repo.snapshot(cfg2, cfg2.project("demo"), sha)
     assert tree2 == tree
     assert (tree / "ext" / "lib" / "tests" / "t.c").is_file()
+
+
+def test_ledgers_are_isolated(cfg, indexed):
+    p, conn, snap, sha, _tree = indexed
+    bench = cfg.with_ledger("bench1")
+    assert bench.db_path == cfg.analysis / "ledgers" / "bench1" / "sdive.db"
+    assert bench.dossier_path("demo", "a").is_relative_to(bench.analysis / "ledgers" / "bench1")
+    assert bench.truth_dir == cfg.truth_dir  # shared, outside every ledger
+    bconn = connect(bench.db_path)
+    with pytest.raises(ledger.LedgerError, match="not indexed"):
+        ledger.indexed_snapshot(bconn, "demo", sha)
+    bsnap = ledger.snapshot_id(bconn, p.name, sha, "main")
+    ledger.index_units(bconn, p.name, bsnap, extract_tree(p, repo.snapshot(bench, p, sha)))
+
+    # Fully sweeping in the bench ledger leaves the main ledger untouched.
+    run = ledger.next_unit_run(bconn, p, bsnap, "sweep", "memory")
+    b = ledger.write_brief(bconn, bench, run)
+    assert b["ledger"] == "bench1" and "--ledger bench1 record" in b["record_command"]
+    assert json.loads(ledger.brief_path(bench, run).read_text())["run_id"] == run
+    ledger.record(bconn, bench, run, audit(run, [(t["key"], "clean") for t in b["targets"]]))
+    assert not ledger.brief_path(bench, run).exists()
+    assert ledger.next_unit_run(bconn, p, bsnap, "sweep", "memory") is None
+    assert ledger.next_unit_run(conn, p, snap, "sweep", "memory") is not None
+
+
+def test_sweep_can_report_whole_files(cfg, indexed):
+    p, conn, snap, _sha, _tree = indexed
+    run = ledger.next_unit_run(conn, p, snap, "sweep", "memory")
+    rep = ledger.record(conn, cfg, run, audit(run, [
+        ("src/parser.c", "clean"),
+        ("src/parser.c::parse@2", "partial"),  # explicit entry overrides the file
+    ]))
+    assert (rep.covered, rep.partial) == (2, 1)
+    assert rep.missing == ["src/util.c::helper"]
+
+    dive = ledger.next_unit_run(conn, p, snap, "dive", "memory")
+    with pytest.raises(ledger.LedgerError, match="is a file"):
+        ledger.record(conn, cfg, dive, audit(dive, [("src/parser.c", "clean")]))

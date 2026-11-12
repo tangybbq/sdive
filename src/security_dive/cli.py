@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import ledger, repo
-from .config import Config, ConfigError, Project, load_config
+from .config import MAIN_LEDGER, Config, ConfigError, Project, load_config
 from .db import connect
 from .schemas import SCHEMAS
 from .units import extract_tree
@@ -23,8 +23,8 @@ EXIT_NOTHING_TO_DO = 3
 
 
 class Ctx:
-    def __init__(self) -> None:
-        self.cfg: Config = load_config()
+    def __init__(self, ledger: str) -> None:
+        self.cfg: Config = load_config().with_ledger(ledger)
         self._conn = None
 
     @property
@@ -51,11 +51,13 @@ class Group(click.Group):
 
 
 @click.group(cls=Group)
+@click.option("--ledger", envvar="SDIVE_LEDGER", default=MAIN_LEDGER, show_default=True,
+              help="Ledger to use: 'main', or a disposable one such as a benchmark round.")
 @click.pass_context
-def main(ctx: click.Context) -> None:
+def main(ctx: click.Context, ledger: str) -> None:
     """Track deep security analysis of MCUboot and Zephyr."""
     try:
-        ctx.obj = Ctx()
+        ctx.obj = Ctx(ledger)
     except ConfigError as e:
         raise click.ClickException(str(e)) from None
 
@@ -84,7 +86,8 @@ def init(c: Ctx) -> None:
         subprocess.run(["git", "init", "-q", "-b", "main", str(a)], check=True)
         (a / ".gitignore").write_text("staging/\n*.db-wal\n*.db-shm\n")
     _ = c.conn  # creates/migrates the database
-    click.echo(f"analysis: {a}\nwork:     {c.cfg.work}\ndb:       {c.cfg.db_path}")
+    click.echo(f"analysis: {a}\nwork:     {c.cfg.work}\nledger:   {c.cfg.ledger}\n"
+               f"db:       {c.cfg.db_path}")
 
 
 @main.command()
@@ -201,16 +204,15 @@ def next_(c: Ctx, project: str, kind: str, lens: str | None, rev: str | None,
     if run_id is None:
         click.echo("nothing to do", err=True)
         sys.exit(EXIT_NOTHING_TO_DO)
-    c.cfg.staging.mkdir(parents=True, exist_ok=True)
-    _emit_json(ledger.brief(c.conn, c.cfg, run_id))
+    _emit_json(ledger.write_brief(c.conn, c.cfg, run_id))
 
 
 @main.command("brief")
 @click.argument("run_id", type=int)
 @pass_ctx
 def brief_(c: Ctx, run_id: int) -> None:
-    """Print the brief for an existing run."""
-    _emit_json(ledger.brief(c.conn, c.cfg, run_id))
+    """Print (and rewrite to staging) the brief for an existing run."""
+    _emit_json(ledger.write_brief(c.conn, c.cfg, run_id))
 
 
 @main.command("record")

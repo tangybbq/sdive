@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import re
 import tomllib
@@ -132,12 +133,19 @@ class Project:
         raise ConfigError(f"project {self.name}: unknown area {name!r}")
 
 
+MAIN_LEDGER = "main"
+
+
 @dataclass(frozen=True)
 class Config:
     root: Path
     analysis: Path
     work: Path
     projects: dict[str, Project]
+    # A ledger is an independent DB + dossiers + run records. "main" is the real
+    # one (at the top of analysis/); others (e.g. benchmark rounds) live under
+    # analysis/ledgers/<name>/ and can be thrown away.
+    ledger: str = MAIN_LEDGER
 
     def project(self, name: str) -> Project:
         try:
@@ -146,13 +154,29 @@ class Config:
             known = ", ".join(sorted(self.projects)) or "none"
             raise ConfigError(f"unknown project {name!r} (configured: {known})") from None
 
+    def with_ledger(self, name: str) -> Config:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+            raise ConfigError(f"invalid ledger name {name!r}")
+        return dataclasses.replace(self, ledger=name)
+
+    @property
+    def ledger_dir(self) -> Path:
+        if self.ledger == MAIN_LEDGER:
+            return self.analysis
+        return self.analysis / "ledgers" / self.ledger
+
     @property
     def db_path(self) -> Path:
-        return self.analysis / "sdive.db"
+        return self.ledger_dir / "sdive.db"
 
     @property
     def staging(self) -> Path:
-        return self.analysis / "staging"
+        return self.ledger_dir / "staging"
+
+    @property
+    def truth_dir(self) -> Path:
+        """Benchmark ground truth. Must never be readable by analysis agents."""
+        return self.analysis / "truth"
 
     def mirror_path(self, project: str) -> Path:
         return self.work / "mirrors" / f"{project}.git"
@@ -161,10 +185,13 @@ class Config:
         return self.work / "snapshots" / project / sha
 
     def dossier_path(self, project: str, area: str) -> Path:
-        return self.analysis / "dossiers" / project / f"{area}.md"
+        return self.ledger_dir / "dossiers" / project / f"{area}.md"
 
     def run_record_path(self, project: str, run_id: int) -> Path:
-        return self.analysis / "runs" / project / f"run-{run_id}.json"
+        return self.ledger_dir / "runs" / project / f"run-{run_id}.json"
+
+    def agent_path(self, name: str) -> Path:
+        return self.root / ".claude" / "agents" / f"{name}.md"
 
 
 def find_config(start: Path | None = None) -> Path:

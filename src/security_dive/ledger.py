@@ -274,6 +274,23 @@ REFERENCE_NOTE = (
 )
 
 
+def agent_for(kind: str) -> str:
+    return "sdive-verifier" if kind == "verify" else "sdive-auditor"
+
+
+def brief_path(cfg: Config, run_id: int) -> Path:
+    return cfg.staging / f"run-{run_id}.brief.json"
+
+
+def write_brief(conn: sqlite3.Connection, cfg: Config, run_id: int) -> dict:
+    """Write the run's brief to staging (the subagent reads it from there)."""
+    b = brief(conn, cfg, run_id)
+    path = brief_path(cfg, run_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(b, indent=2) + "\n")
+    return b
+
+
 def _snapshot_references(conn: sqlite3.Connection, cfg: Config, run: sqlite3.Row) -> list[dict]:
     snap = conn.execute("SELECT sha FROM snapshots WHERE id = ?", (run["snapshot_id"],)).fetchone()
     if snap is None:
@@ -297,8 +314,12 @@ def brief(conn: sqlite3.Connection, cfg: Config, run_id: int) -> dict:
             "path": str(cfg.snapshot_path(project.name, snap["sha"])),
         } if snap else None,
         "threat_model": str(project.threat_model) if project.threat_model else None,
+        "ledger": cfg.ledger,
+        "agent": agent_for(run["kind"]),
+        "brief_path": str(brief_path(cfg, run_id)),
         "result_path": str(cfg.staging / f"run-{run_id}.json"),
         "result_schema": "verify" if run["kind"] == "verify" else "audit",
+        "record_command": f"uv run sdive --ledger {cfg.ledger} record {run_id}",
     }
     refs = _snapshot_references(conn, cfg, run)
     if refs:
@@ -454,17 +475,23 @@ def record(conn: sqlite3.Connection, cfg: Config, run_id: int, data: dict) -> Re
                  un.description, json.dumps([loc.model_dump() for loc in un.locations]), now()),
             )
             report.upstream.append(un.title)
+        # Provenance: the agent definition in effect when the result came back.
+        inputs = json.loads(run["inputs"] or "{}")
+        agent = cfg.agent_path(agent_for(run["kind"]))
+        if agent.is_file():
+            inputs["agent"] = file_hash(agent)
         conn.execute(
-            "UPDATE runs SET status = 'recorded', model = ?, summary = ?, finished_at = ? "
-            "WHERE id = ?",
+            "UPDATE runs SET status = 'recorded', model = ?, summary = ?, finished_at = ?, "
+            "inputs = ? WHERE id = ?",
             (result.model, getattr(result, "summary", None) or getattr(result, "reasoning", ""),
-             now(), run_id),
+             now(), json.dumps(inputs), run_id),
         )
     # Files after the DB commit: a failure here leaves the ledger consistent.
     _append_dossiers(cfg, project, run, result.dossier, report)
     out = cfg.run_record_path(project.name, run_id)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, indent=2) + "\n")
+    brief_path(cfg, run_id).unlink(missing_ok=True)
     return report
 
 
@@ -473,7 +500,7 @@ def _record_audit(conn, run, result: AuditResult, report: RecordReport) -> None:
     versions = {
         r["key"]: r
         for r in conn.execute(
-            "SELECT u.id, u.key, uv.content_hash FROM unit_versions uv "
+            "SELECT u.id, u.key, u.kind, uv.content_hash FROM unit_versions uv "
             "JOIN units u ON u.id = uv.unit_id WHERE uv.snapshot_id = ?",
             (snap,),
         )
@@ -486,9 +513,22 @@ def _record_audit(conn, run, result: AuditResult, report: RecordReport) -> None:
         )
     }
     reported = {}
+    # A sweep may report a whole file by its file-unit key: that covers the
+    # file's function targets, and explicit function entries override it.
+    if run["kind"] == "sweep":
+        for us in result.units:
+            if us.key in versions and versions[us.key]["kind"] == "file":
+                prefix = us.key + "::"
+                for key in targets:
+                    if key.startswith(prefix):
+                        reported[key] = us.model_copy(update={"key": key})
     for us in result.units:
         if us.key not in versions:
             raise LedgerError(f"unknown unit key {us.key!r} for this snapshot")
+        if versions[us.key]["kind"] == "file":
+            if run["kind"] != "sweep":
+                raise LedgerError(f"{us.key!r} is a file; dive results list functions")
+            continue
         if run["kind"] == "dive" and us.key not in targets:
             raise LedgerError(f"unit {us.key!r} is not a target of dive run {run['id']}")
         reported[us.key] = us
