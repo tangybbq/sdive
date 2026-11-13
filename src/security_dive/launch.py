@@ -22,11 +22,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from . import blind
+
 DEFAULT_MODEL = "claude-mythos-5-2"
 # What a headless session may do without asking: the skills' sdive calls,
 # reading, subagents, and writing result files in the ledger's staging
-# directory (granted per run in `command`) — nothing else is writable. The deny
-# rules in .claude/settings.json still apply.
+# directory (granted per run in `command`) — nothing else is writable. The
+# benchmark-blind paths are hard-denied for the whole session (orchestrator
+# included), on top of the per-agent hook in .claude/settings.json.
 ALLOWED_TOOLS = ("Bash(uv run sdive:*)", "Read", "Grep", "Glob", "Agent", "SendMessage",
                  "Skill")
 
@@ -83,6 +86,7 @@ def command(prompt: str, model: str, headless: bool, staging: Path) -> list[str]
         # `//` marks an absolute path in permission rules.
         writable = f"/{staging.resolve()}/**"
         argv += ["-p", "--output-format", "stream-json", "--verbose",
+                 "--disallowedTools", *blind.deny_rules(),
                  "--allowedTools", *ALLOWED_TOOLS, f"Write({writable})", f"Edit({writable})",
                  "--"]
     return [*argv, prompt]

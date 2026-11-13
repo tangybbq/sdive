@@ -1,9 +1,15 @@
 {
-  "permissions": {
-    "deny": [
-      "Read(/analysis/truth/**)",
-      "Read(~/ai/zepsec*/analysis/**)",
-      "Read(~/ai/zepsec/threat-model.md)"
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project --quiet python -I \"$CLAUDE_PROJECT_DIR/src/security_dive/blind.py\""
+          }
+        ]
+      }
     ]
   }
 }

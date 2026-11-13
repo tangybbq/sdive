@@ -30,7 +30,14 @@ and roadmap** — read it before structural changes.
   with finding references removed); keep finding IDs out of it.
 - **Benchmarks are blind.** Never read `analysis/truth/` (or zepsec analysis
   trees) during analysis, never put truth content into lenses, agents, briefs or
-  dossiers. Only `sdive bench report` reads it, after a round.
+  dossiers. Only `sdive bench report` reads it, after a round. Enforced per
+  agent, not per repo: a PreToolUse hook (`src/security_dive/blind.py`,
+  wired in `.claude/settings.json`) refuses `sdive-*` agents' reads and broad
+  searches of those paths, and `sdive run` hard-denies them for the whole
+  headless session. Interactive sessions (review, export) can read them, so
+  an interactive orchestrator running analysis must keep to this by rule.
+  Don't put these paths back into `permissions.deny`: that blinds every
+  session in the repo.
 - Analysis agents (`.claude/agents/sdive-*`) get only the brief path from the
   skills; they have no Bash.
 

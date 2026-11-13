@@ -2,7 +2,7 @@ import json
 import sys
 from pathlib import Path
 
-from security_dive import launch
+from security_dive import blind, launch
 
 
 def test_choose_auto_order():
@@ -28,6 +28,9 @@ def test_invocation_and_command(tmp_path):
     assert argv[:3] == ["claude", "--model", "m"] and argv[-1] == "/sdive-dive mcuboot 1"
     assert f"Write(/{(tmp_path / 'staging').resolve()}/**)" in argv
     assert "acceptEdits" not in argv and "--permission-mode" not in argv
+    deny = argv.index("--disallowedTools")
+    assert argv[deny + 1:deny + 4] == blind.deny_rules()
+    assert argv.index("--allowedTools") == deny + 4
     assert launch.command("x", "m", False, tmp_path) == ["claude", "--model", "m", "x"]
 
 

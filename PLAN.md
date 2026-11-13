@@ -197,6 +197,19 @@ Built (tooling); the benchmark rounds themselves run in a Mythos session:
   zepsec's threat model were all refused by the harness; a Grep over the parent
   `analysis/` silently skipped the denied subtree; reads of the snapshot and
   lenses worked. Not covered by deny rules: subprocesses (agents have no Bash).
+  **Changed 2026-11-13:** project deny rules bind every session in the repo,
+  so they also blocked reviewing results, scoring and export. Blindness is now
+  per agent: a PreToolUse hook (`blind.py`) refuses an `sdive-*` agent's Read
+  into a protected path, and any Grep/Glob whose root is inside one or contains
+  one (a hook can't filter results, so the broad search is refused rather than
+  pruned); `sdive run` passes the same paths as session-wide
+  `--disallowedTools`. Gap: an interactive orchestrator is blind by rule only.
+  Tested 2026-11-13 from inside `sdive-auditor`: Reads of the truth file,
+  zepsec's threat model and a zepsec-precutover analysis file, Grep/Glob rooted
+  at the truth dir, `analysis/`, the project root (or no path), `~/ai`, and
+  Globs climbing out of the snapshot with `../` or naming an absolute protected
+  pattern were all refused by the hook; snapshot Read/Grep/Glob worked; the main
+  session reads the truth tree normally.
 - **Rounds** use disposable ledgers (`--ledger bench-...`), so prompt changes are
   measured in fresh rounds and nothing leaks into `main`.
 - **Scoring** is by human judgement: location matches (same function, near,
