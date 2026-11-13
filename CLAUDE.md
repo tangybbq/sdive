@@ -1,7 +1,26 @@
 # CLAUDE.md — security-dive
 
 Proactive security analysis of MCUboot, then Zephyr. **`PLAN.md` is the design
-and roadmap** — read it before structural changes.
+and roadmap** — read it before structural changes. **`process.md` is the
+operating manual**: the flow from setup to fixed advisories, step by step,
+with the `sdive` command or skill for each.
+
+## Keeping process.md current
+
+`process.md` must match the code. In the same commit as the change:
+
+- adding, removing or renaming an `sdive` command, option or skill, or
+  changing what one does → update its row and the tl;dr list at the top;
+- adding or reordering a step in the flow → update the tl;dr, the mermaid
+  diagram and the step's section;
+- building something marked **(to build)** → drop the marker and document
+  how it actually works;
+- changing the finding lifecycle, the triage rules or the zepsec hand-off →
+  update the relevant section (and `PLAN.md` if the design changed).
+
+Before committing, check the tl;dr still lists every command in flow order.
+Keep `process.md` free of finding details, slugs and truth-set content: it is
+committed and may be shared.
 
 ## Shape
 
