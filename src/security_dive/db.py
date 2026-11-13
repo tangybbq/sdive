@@ -144,6 +144,36 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE findings ADD COLUMN carried_from TEXT;
     """,
+    # v4: triage after verification. A cluster is a set of verified findings one
+    # fix closes: the unit of a fix PR and of an advisory. Its track (advisory /
+    # plain-fix) is a recorded human decision; finding_scope is the evidence for
+    # it, from blaming each finding's lines against the release tags.
+    """
+    CREATE TABLE clusters (
+        id          INTEGER PRIMARY KEY,
+        project     TEXT NOT NULL,
+        slug        TEXT NOT NULL UNIQUE,
+        title       TEXT NOT NULL,
+        rationale   TEXT,
+        track       TEXT CHECK (track IN ('advisory', 'plain-fix')),
+        track_note  TEXT,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+    );
+    ALTER TABLE findings ADD COLUMN cluster_id INTEGER REFERENCES clusters(id);
+
+    CREATE TABLE finding_scope (
+        finding_id      INTEGER NOT NULL REFERENCES findings(id),
+        snapshot_id     INTEGER NOT NULL REFERENCES snapshots(id),
+        latest_release  TEXT,   -- newest release tag that is an ancestor of the snapshot
+        verdict         TEXT NOT NULL
+                        CHECK (verdict IN ('released', 'post-release', 'mixed', 'unknown')),
+        as_is_since     TEXT,   -- first release holding every released flagged line as it reads now
+        detail          TEXT NOT NULL,   -- JSON: per location, blamed commits and their releases
+        scoped_at       TEXT NOT NULL,
+        PRIMARY KEY (finding_id, snapshot_id)
+    );
+    """,
 ]
 
 

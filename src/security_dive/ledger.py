@@ -24,7 +24,7 @@ COVERED = ("clean", "hypotheses")
 # Allowed finding status transitions (manual `finding set` and verify runs).
 TRANSITIONS: dict[str, set[str]] = {
     "hypothesis": {"hypothesis", "verified", "rejected", "duplicate"},
-    "verified": {"exported", "fixed", "rejected"},
+    "verified": {"exported", "fixed", "rejected", "duplicate"},
     "rejected": {"hypothesis"},
     "duplicate": {"hypothesis"},
     "exported": {"fixed"},
@@ -710,8 +710,12 @@ def _record_verify(conn, run, result: VerifyResult, report: RecordReport) -> Non
 
 
 def set_finding_status(
-    conn: sqlite3.Connection, slug: str, status: str, note: str | None = None
+    conn: sqlite3.Connection, slug: str, status: str, note: str | None = None,
+    duplicate_of: str | None = None,
 ) -> tuple[str, str]:
+    """Move a finding through its lifecycle. Marking a duplicate by hand
+    names the finding it duplicates (an existing, non-duplicate one), and
+    takes the finding out of any cluster."""
     f = conn.execute("SELECT id, status FROM findings WHERE slug = ?", (slug,)).fetchone()
     if f is None:
         raise LedgerError(f"no finding {slug!r}")
@@ -719,11 +723,24 @@ def set_finding_status(
         raise LedgerError(f"unknown status {status!r}")
     if status not in TRANSITIONS[f["status"]]:
         raise LedgerError(f"{slug} is {f['status']}; allowed: {sorted(TRANSITIONS[f['status']])}")
+    if (status == "duplicate") != (duplicate_of is not None):
+        raise LedgerError("--of names the original exactly when marking a duplicate")
+    if duplicate_of is not None:
+        orig = conn.execute("SELECT status FROM findings WHERE slug = ?",
+                            (duplicate_of,)).fetchone()
+        if orig is None or duplicate_of == slug:
+            raise LedgerError(f"no other finding {duplicate_of!r}")
+        if orig["status"] == "duplicate":
+            raise LedgerError(f"{duplicate_of} is itself a duplicate; name its original")
     with conn:
         conn.execute(
-            "UPDATE findings SET status = ?, updated_at = ? WHERE id = ?", (status, now(), f["id"])
+            "UPDATE findings SET status = ?, duplicate_of = coalesce(?, duplicate_of), "
+            "cluster_id = CASE WHEN ? = 'duplicate' THEN NULL ELSE cluster_id END, "
+            "updated_at = ? WHERE id = ?", (status, duplicate_of, status, now(), f["id"])
         )
-        _event(conn, f["id"], None, f["status"], status, note)
+        _event(conn, f["id"], None, f["status"], status,
+               note if duplicate_of is None else f"duplicate of {duplicate_of}"
+               + (f": {note}" if note else ""))
     return f["status"], status
 
 

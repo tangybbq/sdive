@@ -16,7 +16,7 @@ from rich.table import Table
 
 from . import bench as bench_mod
 from . import carry as carry_mod
-from . import launch, ledger, repo
+from . import launch, ledger, repo, triage
 from .config import MAIN_LEDGER, Config, ConfigError, Project, load_config
 from .db import connect
 from .schemas import SCHEMAS
@@ -601,12 +601,142 @@ def finding_show(c: Ctx, slug: str) -> None:
 @finding.command("set")
 @click.argument("slug")
 @click.option("--status", required=True, type=click.Choice(sorted(ledger.TRANSITIONS)))
+@click.option("--of", "duplicate_of", help="With --status duplicate: the original finding.")
 @click.option("--note")
 @pass_ctx
-def finding_set(c: Ctx, slug: str, status: str, note: str | None) -> None:
+def finding_set(c: Ctx, slug: str, status: str, duplicate_of: str | None,
+                note: str | None) -> None:
     """Move a finding through its lifecycle (e.g. verified -> exported)."""
-    old, new = ledger.set_finding_status(c.conn, slug, status, note)
-    click.echo(f"{slug}: {old} -> {new}")
+    old, new = ledger.set_finding_status(c.conn, slug, status, note, duplicate_of)
+    click.echo(f"{slug}: {old} -> {new}" + (f" (of {duplicate_of})" if duplicate_of else ""))
+
+
+# --- triage: clusters and release scoping -----------------------------------
+
+
+@main.group()
+def cluster() -> None:
+    """Group verified findings that one fix closes (the unit of a fix and an advisory)."""
+
+
+@cluster.command("new")
+@click.argument("project")
+@click.argument("slug")
+@click.argument("findings", nargs=-1, required=True)
+@click.option("--title", required=True)
+@click.option("--rationale", help="Why these belong together (the shared root cause / fix).")
+@click.option("--move", is_flag=True, help="Take findings out of another cluster.")
+@pass_ctx
+def cluster_new(c: Ctx, project: str, slug: str, findings: tuple[str, ...], title: str,
+                rationale: str | None, move: bool) -> None:
+    """Create cluster SLUG holding FINDINGS."""
+    c.project(project)
+    triage.new_cluster(c.conn, project, slug, title, rationale, list(findings), move)
+    click.echo(f"cluster {slug}: {len(findings)} findings")
+
+
+@cluster.command("add")
+@click.argument("slug")
+@click.argument("findings", nargs=-1, required=True)
+@click.option("--move", is_flag=True, help="Take findings out of another cluster.")
+@pass_ctx
+def cluster_add(c: Ctx, slug: str, findings: tuple[str, ...], move: bool) -> None:
+    """Add FINDINGS to cluster SLUG."""
+    triage.add_to_cluster(c.conn, slug, list(findings), move)
+    click.echo(f"cluster {slug}: +{len(findings)}")
+
+
+@cluster.command("remove")
+@click.argument("slug")
+@click.argument("findings", nargs=-1, required=True)
+@pass_ctx
+def cluster_remove(c: Ctx, slug: str, findings: tuple[str, ...]) -> None:
+    """Take FINDINGS out of cluster SLUG."""
+    triage.remove_from_cluster(c.conn, slug, list(findings))
+    click.echo(f"cluster {slug}: -{len(findings)}")
+
+
+@cluster.command("track")
+@click.argument("slug")
+@click.argument("track", type=click.Choice(["advisory", "plain-fix"]))
+@click.option("--note", required=True, help="Why (e.g. the release scoping evidence).")
+@pass_ctx
+def cluster_track(c: Ctx, slug: str, track: str, note: str) -> None:
+    """Record cluster SLUG's track: advisory (shipped in a release) or plain-fix."""
+    triage.set_track(c.conn, slug, track, note)
+    click.echo(f"cluster {slug}: track {track}")
+
+
+@cluster.command("show")
+@click.argument("slug")
+@pass_ctx
+def cluster_show(c: Ctx, slug: str) -> None:
+    """Show a cluster and its members, as JSON."""
+    _emit_json(triage.cluster_report(c.conn, slug))
+
+
+@main.command()
+@click.argument("project")
+@pass_ctx
+def clusters(c: Ctx, project: str) -> None:
+    """List clusters, then verified findings in none."""
+    rows = c.conn.execute("SELECT * FROM clusters WHERE project = ? ORDER BY id",
+                          (project,)).fetchall()
+    t = Table()
+    for col in ("cluster", "n", "track", "scope", "since", "props", "title"):
+        t.add_column(col)
+    for r in rows:
+        m = triage.cluster_members(c.conn, r["id"])
+        since = sorted({x["as_is_since"] for x in m if x["as_is_since"]},
+                       key=triage._version)
+        t.add_row(r["slug"], str(len(m)), r["track"] or "",
+                  triage.combine([x["scope"] for x in m]) or "unscoped",
+                  "..".join(dict.fromkeys([since[0], since[-1]])) if since else "",
+                  ",".join(sorted({x["property"] or "?" for x in m})), r["title"])
+    console.print(t)
+    loose = triage.unclustered(c.conn, project)
+    if loose:
+        console.print(f"\n{len(loose)} verified findings in no cluster:")
+        for f in loose:
+            console.print(f"  {f['slug']}  [dim]{f['property'] or ''} {f['attacker'] or ''} "
+                          f"{f['title'][:90]}[/dim]")
+
+
+@main.command()
+@click.argument("project")
+@click.argument("slugs", nargs=-1)
+@click.option("--redo", is_flag=True, help="Re-scope findings already scoped.")
+@click.option("--json", "as_json", is_flag=True)
+@pass_ctx
+def scope(c: Ctx, project: str, slugs: tuple[str, ...], redo: bool, as_json: bool) -> None:
+    """Release scoping: blame each verified finding's lines against the release tags.
+
+    Scopes the named findings, else every verified finding not yet scoped at its
+    snapshot. Uses the mirror as it stands (run `sdive mirror` for new tags)."""
+    p = c.project(project)
+    git_dir = c.cfg.mirror_path(p.name)
+    if not git_dir.exists():
+        raise click.ClickException(f"no mirror for {project}; run `sdive mirror {project}`")
+    releases = triage.Releases(git_dir)
+    results = [triage.scope_finding(c.conn, git_dir, releases, i)
+               for i in triage.scope_targets(c.conn, project, list(slugs), redo)]
+    if as_json:
+        _emit_json(results)
+        return
+    t = Table()
+    for col in ("slug", "verdict", "since", "lines rel/post", "latest", "post-release commits"):
+        t.add_column(col)
+    for r in results:
+        post = sorted({x["sha"][:10] for loc in r["locations"] for x in loc.get("commits", [])
+                       if x["post_release"]})
+        errs = sum(1 for loc in r["locations"] if "error" in loc)
+        t.add_row(r["slug"], r["verdict"], r["as_is_since"] or "",
+                  f"{r['released_lines']}/{r['post_release_lines']}"
+                  + (f" ({errs} unblamed)" if errs else ""),
+                  r["latest_release"] or "", " ".join(post))
+    console.print(t)
+    if not results:
+        click.echo("nothing to scope")
 
 
 @main.group()

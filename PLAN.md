@@ -10,10 +10,11 @@ changes.
 - **zepsec** (`../zepsec`) looks *backward*: it finds already-merged **silent
   fixes**. security-dive looks *forward*: **live bugs in current code**, and
   **bugs introduced by incoming changes**.
-- Analysis and tracking live **here**. A verified finding is *exported* in a form
-  zepsec/`ghsa file` can take (the `analysis/mcuboot_findings/<slug>/` shape) for
-  advisory drafting, CVE and fix authoring. security-dive never files anything
-  itself.
+- Analysis and tracking live **here**. A verified cluster of findings is
+  *exported* to a local directory that zepsec's client-side skills read to
+  draft the advisory, author the fix and request the CVE (see Triage and
+  export). security-dive never files anything itself, and the export never
+  goes to zepsec's prod Instance.
 - Reused from zepsec: the MCUboot **threat model** (`../zepsec/threat-model.md`,
   properties P1–P6, attacker classes A1–A3) is the bar every verdict must name.
   It is referenced in place (its hash is recorded per run), with the goal of
@@ -239,9 +240,48 @@ fits comfortably in context).
 2. **Entry-point dives** — image header/TLV parsing, serial recovery/SMP,
    swap-status and trailer reads, encrypted-key unwrap, `ext/` crypto glue.
 3. **Verification** — every hypothesis gets an independent blind verifier.
-4. **Dossiers** written/updated per area; verified findings deduped and exported.
+4. **Dossiers** written/updated per area.
+5. **Triage and export** — below.
 Second tier afterwards: the other ports (espressif, cypress, nuttx, mynewt, mbed),
 `ext/`, `scripts/imgtool`.
+
+### Triage and export (decided 2026-11-13)
+
+From a verified finding to an advisory and a fix. The state stays in the sdive
+ledger; zepsec consumes a local export and reports back through a status file.
+
+1. **Consolidate.** Duplicates the verifier missed are marked by hand
+   (`sdive finding set S --status duplicate --of ORIG`). Verified findings are
+   grouped into **clusters** (`sdive cluster new|add|remove`): findings one fix
+   closes. A cluster is the unit of a fix PR **and of an advisory** (one
+   advisory per cluster).
+2. **Release scoping** (`sdive scope`). Each finding's locations are blamed at
+   its snapshot (`-w -M -C`) and every blamed commit mapped to the first `vX.Y.Z`
+   tag holding it: `released` (every flagged line, as it reads now, was in the
+   latest release), `post-release`, `mixed` (read the post-release commits), or
+   `unknown`. `as_is_since` is an upper bound on when the bug arrived, not the
+   advisory's floor. The cluster's **track** is then recorded by hand with a
+   reason (`sdive cluster track C advisory|plain-fix --note …`), following the
+   disclosure policy: shipped → `advisory`; merged since the last release →
+   `plain-fix`.
+3. **Write-up** (to build): per cluster, advisory summary and description,
+   recommended fix, affected configurations, CVSS, introducing commit.
+4. **Export** (to build): `sdive export C` writes
+   `analysis/exports/<p>/<cluster>/` — `cluster.json` shaped like zepsec's
+   MCUboot `result.json` (`is_vulnerability`, `reportable`, severity and CVSS,
+   CWE, `advisory_summary`/`advisory_description`, `affected_components`,
+   `affected_versions`, `introduced_by`, `property_violated`,
+   `attacker_class`, `recommended_fix`) plus provenance (snapshot, runs,
+   verifier verdicts, `carried_from`) and a readable `cluster.md`. Findings move
+   to `exported`. Never contains truth-set content.
+5. **zepsec, client side** (zepsec's work): a local intake channel reads the
+   export directory, dedups against MCUboot advisories and the disclosure
+   corpus, and runs the pre-fix flow (embargoed draft → `/mcuboot-fix` →
+   publish → CVE) for `advisory` clusters, or just the fix for `plain-fix`.
+   **Our blind verify is trusted**: zepsec does not re-validate.
+6. **Status back**: zepsec writes `status.json` next to the export (dedup
+   verdict, GHSA id, fix PR, fix SHA); sdive reads it to advance the findings
+   (`exported` → known / filed → `fixed`).
 
 ### Phase 3 — MCUboot pre-merge and post-merge
 - `sdive prs sync` (via `gh`) lists open PRs on `mcu-tools/mcuboot` with head
