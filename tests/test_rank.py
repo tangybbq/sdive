@@ -71,6 +71,16 @@ def test_rank_brief_record_rescore(cfg, indexed):  # noqa: F811
     assert ledger.run_minutes([conn], p.name)["rank"][1] == 1
 
 
+def test_rank_by_area(cfg, indexed):  # noqa: F811
+    p, conn, snap, _sha, _tree = indexed
+    assert {r["area"] for r in rank.unranked(conn, snap, area="misc")} == {"misc"}
+    assert rank.unranked(conn, snap, min_priority=4, area="misc") == []
+    # parser.c outranks util.c, but the area brief skips it.
+    b = rank.write_brief(conn, cfg, p, snap, area="misc")
+    assert [f["path"] for f in b["files"]] == ["src/util.c"]
+    assert rank.write_brief(conn, cfg, p, snap, area="misc") is None
+
+
 def test_batches_whole_files():
     rows = [{"path": p} for p in ["a", "a", "b", "c", "c", "c", "d"]]
     out = [[(path, len(fns)) for path, fns, _ in b] for b in rank.batches(rows, 3)]

@@ -85,8 +85,9 @@ def choose(kind: str | None, lens: str | None, pending: int,
 
 
 def invocation(plan: Plan, project: str, ledger: str, runs: int | None,
-               minutes: float | None, parallel: int) -> str:
-    """The slash-command prompt for the session."""
+               minutes: float | None, parallel: int, area: str | None = None) -> str:
+    """The slash-command prompt for the session. `area` restricts sweeps and
+    dives; verification is not per area."""
     parts = [f"/sdive-{plan.kind}", project]
     if plan.kind == "sweep":
         parts.append(plan.lens)
@@ -96,6 +97,8 @@ def invocation(plan: Plan, project: str, ledger: str, runs: int | None,
         parts.append(str(runs or 1))
     if plan.kind == "dive" and plan.lens:
         parts += ["--lens", plan.lens]
+    if area and plan.kind in ("sweep", "dive"):
+        parts += ["--area", area]
     if parallel > 1:
         parts += ["--parallel", str(parallel)]
     if ledger != "main":
@@ -258,10 +261,12 @@ def recover_rank_briefs(conn: sqlite3.Connection, cfg, out=sys.stdout) -> None:
 
 def rank_loop(conn: sqlite3.Connection, cfg, project, snap: int, limit: int | None,
               parallel: int, min_priority: int, env: dict[str, str],
-              model: str | None = None, agent_runner=run_agent, out=sys.stdout) -> dict:
-    """Rank up to `limit` briefs (None: all), `parallel` at a time. Stops
-    handing out briefs after an agent session fails (e.g. a usage limit).
-    Returns totals: briefs, functions, failed, cost (as claude reports it)."""
+              model: str | None = None, agent_runner=run_agent, out=sys.stdout,
+              area: str | None = None) -> dict:
+    """Rank up to `limit` briefs (None: all), `parallel` at a time, of
+    `area`'s functions if given. Stops handing out briefs after an agent
+    session fails (e.g. a usage limit). Returns totals: briefs, functions,
+    failed, cost (as claude reports it)."""
     log_dir = cfg.ledger_dir / "sessions" / "rank"
     totals = {"briefs": 0, "functions": 0, "failed": 0, "shortened": 0, "cost": 0.0}
     pending: dict[Future, tuple[dict, bool]] = {}
@@ -283,7 +288,8 @@ def rank_loop(conn: sqlite3.Connection, cfg, project, snap: int, limit: int | No
         def fill() -> None:
             while (len(pending) < parallel and not state["stop"]
                    and (limit is None or state["started"] < limit)):
-                b = rank.write_brief(conn, cfg, project, snap, min_priority=min_priority)
+                b = rank.write_brief(conn, cfg, project, snap, min_priority=min_priority,
+                                     area=area)
                 if b is None:
                     state["stop"] = True
                     return

@@ -442,6 +442,20 @@ def test_run_minutes_median_and_defaults(cfg, indexed):
     assert n == 2 and abs(m - 3.0) < 0.01  # median of 1 and 5
 
 
+def test_agent_minutes_by_area(cfg, indexed):
+    p, conn, snap, _sha, _tree = indexed
+    run = ledger.next_unit_run(conn, p, snap, "dive", "memory")  # parser.c: parsing
+    ledger.record(conn, cfg, run, audit(run, [
+        (t["key"], "clean") for t in ledger.brief(conn, cfg, run)["targets"]]))
+    conn.execute("UPDATE runs SET started_at = '2026-01-01T00:00:00+00:00', "
+                 "finished_at = '2026-01-01T00:04:00+00:00' WHERE id = ?", (run,))
+    def dive_minutes(area):
+        return ledger.agent_minutes(conn, p.name, snap, area).get(("dive", "memory"))
+    assert dive_minutes(None) == pytest.approx(4.0)
+    assert dive_minutes("parsing") == pytest.approx(4.0)
+    assert dive_minutes("misc") is None
+
+
 def test_lens_applicability_scopes_queue_and_coverage(cfg, indexed):
     p, conn, snap, _sha, _tree = indexed
     (p.lenses_dir / "parsers.md").write_text(

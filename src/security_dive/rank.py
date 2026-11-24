@@ -229,16 +229,20 @@ def _outstanding(cfg: Config) -> set[str]:
     return keys
 
 
-def unranked(conn: sqlite3.Connection, snap: int, min_priority: int = 0) -> list[sqlite3.Row]:
-    """Function units in `snap` with no reach judgement, best score first."""
+def unranked(conn: sqlite3.Connection, snap: int, min_priority: int = 0,
+             area: str | None = None) -> list[sqlite3.Row]:
+    """Function units in `snap` (in `area`, if given) with no reach
+    judgement, best score first."""
     return conn.execute(
         """SELECT u.id, u.key, u.path, u.symbol, uv.area, uv.priority, uv.score,
                   uv.start_line, uv.end_line, uv.signals
            FROM unit_versions uv JOIN units u ON u.id = uv.unit_id
-           WHERE uv.snapshot_id = ? AND u.kind = 'function' AND uv.priority >= ?
+           WHERE uv.snapshot_id = :snap AND u.kind = 'function' AND uv.priority >= :min
+             AND (:area IS NULL OR uv.area = :area)
              AND NOT EXISTS (SELECT 1 FROM unit_reach r
                              WHERE r.snapshot_id = uv.snapshot_id AND r.unit_id = uv.unit_id)
-           ORDER BY uv.score DESC, u.path, uv.start_line""", (snap, min_priority)).fetchall()
+           ORDER BY uv.score DESC, u.path, uv.start_line""",
+        {"snap": snap, "min": min_priority, "area": area}).fetchall()
 
 
 def batches(rows: list[sqlite3.Row], max_functions: int = RANK_MAX_FUNCTIONS,
@@ -271,13 +275,13 @@ def batches(rows: list[sqlite3.Row], max_functions: int = RANK_MAX_FUNCTIONS,
 
 def write_brief(conn: sqlite3.Connection, cfg: Config, project: Project, snap: int,
                 max_functions: int = RANK_MAX_FUNCTIONS, min_priority: int = 0,
-                max_tokens: float = RANK_MAX_TOKENS) -> dict | None:
+                max_tokens: float = RANK_MAX_TOKENS, area: str | None = None) -> dict | None:
     """A rank brief for the best unranked files (by their best function's
     score, within `max_functions` and the `max_tokens` context budget; a file
     too large for the budget comes as a line range), or None when nothing is
-    left."""
+    left. `area` limits it to that area's functions."""
     leased = _outstanding(cfg)
-    rows = [r for r in unranked(conn, snap, min_priority) if r["key"] not in leased]
+    rows = [r for r in unranked(conn, snap, min_priority, area) if r["key"] not in leased]
     if not rows:
         return None
     sha = conn.execute("SELECT sha FROM snapshots WHERE id = ?", (snap,)).fetchone()[0]

@@ -413,6 +413,7 @@ def rank_brief(c: Ctx, project: str, rev: str | None, max_functions: int,
 @click.option("--parallel", default=1, type=click.IntRange(1, 8), show_default=True)
 @click.option("--min-priority", default=4, show_default=True,
               help="Only areas at this priority or above.")
+@click.option("--area", help="Only this area's functions (see `sdive areas`).")
 @click.option("--rev", help="Snapshot revision (default: the default branch).")
 @click.option("--model", default=None, help="Override the ranker agent's own model.")
 @click.option("--keep-api-key", is_flag=True,
@@ -420,12 +421,15 @@ def rank_brief(c: Ctx, project: str, rev: str | None, max_functions: int,
 @click.option("--dry-run", is_flag=True, help="Print the claude command for one brief.")
 @pass_ctx
 def rank_run(c: Ctx, project: str, count: str, parallel: int, min_priority: int,
-             rev: str | None, model: str | None, keep_api_key: bool, dry_run: bool) -> None:
+             area: str | None, rev: str | None, model: str | None, keep_api_key: bool,
+             dry_run: bool) -> None:
     """Rank COUNT briefs (or 'all') headless, with no orchestrating model: each
     brief is one `claude -p --agent sdive-ranker` session; results are recorded
     as they finish, a rejected result is sent back to its session once, and
     each session's reported cost is logged under sessions/rank/."""
     p = c.project(project)
+    if area is not None:
+        p.area_named(area)
     _sha, snap = _snapshot_for(c, p, rev)
     if dry_run:
         argv = launch.agent_command("sdive-ranker", "Brief: <brief_path>", c.cfg.staging, model)
@@ -435,7 +439,8 @@ def rank_run(c: Ctx, project: str, count: str, parallel: int, min_priority: int,
         raise click.BadParameter("a number or 'all'", param_hint="COUNT")
     launch.recover_rank_briefs(c.conn, c.cfg)
     t = launch.rank_loop(c.conn, c.cfg, p, snap, None if count == "all" else int(count),
-                         parallel, min_priority, launch.child_env(keep_api_key), model)
+                         parallel, min_priority, launch.child_env(keep_api_key), model,
+                         area=area)
     cut = f", {t['shortened']} reasons shortened" if t["shortened"] else ""
     click.echo(f"\nranked {t['briefs']} briefs ({t['functions']} functions), "
                f"{t['failed']} failed{cut}; reported cost ${t['cost']:.2f}")
@@ -619,6 +624,7 @@ def todo(c: Ctx, project: str, rev: str | None, only: tuple[str, ...], area: str
               help="auto with --minutes: split the budget into sessions of this size, "
                    "choosing the work afresh for each.")
 @click.option("--parallel", type=click.IntRange(1, 4), default=1, show_default=True)
+@click.option("--area", help="Restrict sweeps and dives to one area (see `sdive areas`).")
 @click.option("--model", envvar="SDIVE_MODEL", default=launch.DEFAULT_MODEL, show_default=True)
 @click.option("-i", "--interactive", is_flag=True,
               help="Open an interactive session instead of running headless (-p).")
@@ -627,8 +633,8 @@ def todo(c: Ctx, project: str, rev: str | None, only: tuple[str, ...], area: str
 @click.option("--dry-run", is_flag=True, help="Print the claude command; don't run it.")
 @pass_ctx
 def run_(c: Ctx, project: str, kind: str, lens: str | None, runs: int | None,
-         minutes: float | None, session_minutes: float, parallel: int, model: str,
-         interactive: bool, keep_api_key: bool, dry_run: bool) -> None:
+         minutes: float | None, session_minutes: float, parallel: int, area: str | None,
+         model: str, interactive: bool, keep_api_key: bool, dry_run: bool) -> None:
     """Launch Claude Code on the next piece of work (or KIND [LENS]).
 
     auto: first rank any unranked functions at priority >= 4 (headless, as
@@ -644,24 +650,34 @@ def run_(c: Ctx, project: str, kind: str, lens: str | None, runs: int | None,
       sdive run zephyr --minutes 120 --parallel 4
       sdive run mcuboot sweep memory-safety --runs 2
       sdive run mcuboot dive --runs 1 --dry-run
+      sdive run zephyr dive --area bluetooth --runs 5
+
+    --area limits ranking, sweeps and dives to one area, and auto shares
+    the time between them by the runs in that area; verification still
+    covers the whole project.
     """
     if runs and minutes:
         raise click.UsageError("give --runs or --minutes, not both")
+    if area is not None and kind == "verify":
+        raise click.UsageError("verification is not per area; drop --area")
     p = c.project(project)
+    if area is not None:
+        p.area_named(area)
     _sha, snap = _snapshot_for(c, p, None)
     auto = kind == "auto"
     env = launch.child_env(keep_api_key)
 
-    if auto and (todo := len(rank.unranked(c.conn, snap, RANK_MIN_PRIORITY))):
-        click.echo(f"{todo} functions at priority >= {RANK_MIN_PRIORITY} unranked → "
-                   "sdive rank run all")
+    if auto and (todo := len(rank.unranked(c.conn, snap, RANK_MIN_PRIORITY, area))):
+        in_area = f" in {area}" if area else ""
+        click.echo(f"{todo} functions at priority >= {RANK_MIN_PRIORITY}{in_area} unranked → "
+                   "sdive rank run all" + (f" --area {area}" if area else ""))
         if not dry_run:
             launch.recover_rank_briefs(c.conn, c.cfg)
             t = launch.rank_loop(c.conn, c.cfg, p, snap, None, max(parallel, 4),
-                                 RANK_MIN_PRIORITY, env)
+                                 RANK_MIN_PRIORITY, env, area=area)
             click.echo(f"ranked {t['briefs']} briefs ({t['functions']} functions), "
                        f"{t['failed']} failed; reported cost ${t['cost']:.2f}\n")
-            if t["failed"] or rank.unranked(c.conn, snap, RANK_MIN_PRIORITY):
+            if t["failed"] or rank.unranked(c.conn, snap, RANK_MIN_PRIORITY, area):
                 click.echo("ranking incomplete; stopping before other work", err=True)
                 sys.exit(1)
 
@@ -673,16 +689,19 @@ def run_(c: Ctx, project: str, kind: str, lens: str | None, runs: int | None,
             (p.name,)).fetchone()[0]
         plan = launch.choose(
             None if auto else kind, lens, pending,
-            lambda n: len(ledger.queue_estimate(c.conn, p, snap, "sweep", n)), order,
-            spent=ledger.agent_minutes(c.conn, p.name, snap), sweep_share=p.sweep_share,
-            dive_left=lambda: bool(ledger.queue_estimate(c.conn, p, snap, "dive", "holistic")))
+            lambda n: len(ledger.queue_estimate(c.conn, p, snap, "sweep", n, area)), order,
+            spent=ledger.agent_minutes(c.conn, p.name, snap, area),
+            sweep_share=p.sweep_share,
+            dive_left=lambda: bool(
+                ledger.queue_estimate(c.conn, p, snap, "dive", "holistic", area)))
         if plan is None:
-            click.echo(f"nothing to do for {kind}" + (f" {lens}" if lens else ""))
+            click.echo(f"nothing to do for {kind}" + (f" {lens}" if lens else "")
+                       + (f" in area {area}" if area else ""))
             sys.exit(EXIT_NOTHING_TO_DO if remaining == minutes else 0)
         chunk = remaining
         if auto and remaining is not None and not interactive:
             chunk = min(remaining, session_minutes)
-        prompt = launch.invocation(plan, p.name, c.cfg.ledger, runs, chunk, parallel)
+        prompt = launch.invocation(plan, p.name, c.cfg.ledger, runs, chunk, parallel, area)
         argv = launch.command(prompt, model, headless=not interactive, staging=c.cfg.staging)
         click.echo(f"{plan.reason} → {prompt}")
         if dry_run:

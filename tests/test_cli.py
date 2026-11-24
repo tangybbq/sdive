@@ -94,3 +94,31 @@ def test_clusters_and_writeups_when_none(root, monkeypatch):
     r = run(main, ["writeups", "demo"])
     assert r.exit_code == 0, r.output
     assert "no tracked clusters in demo" in r.output and "┏" not in r.output
+
+
+def test_run_area_ranks_only_that_area(root, monkeypatch):
+    monkeypatch.chdir(root)
+    (root / "projects" / "demo" / "lenses" / "holistic.md").write_text("Everything.\n")
+    run = CliRunner().invoke
+    assert run(main, ["mirror", "demo"]).exit_code == 0
+    assert run(main, ["units", "demo"]).exit_code == 0
+    areas, prompts = [], []
+    monkeypatch.setattr(cli.launch, "rank_loop",
+                        lambda *a, area=None, **k: areas.append(area))
+    monkeypatch.setattr(cli.launch, "run",
+                        lambda argv, env, cwd, log_dir, meta, out=None:
+                        prompts.append(meta["prompt"]) or 0)
+    # misc (priority 1) has nothing to rank, though parsing does: straight to work.
+    r = run(main, ["run", "demo", "--area", "misc", "--runs", "1"])
+    assert r.exit_code == 0, r.output
+    assert areas == [] and prompts == ["/sdive-sweep demo memory 1 --area misc"]
+    r = run(main, ["run", "demo", "--area", "parsing", "--runs", "1", "--dry-run"])
+    assert "in parsing unranked → sdive rank run all --area parsing" in r.output
+    r = run(main, ["run", "demo", "--area", "nosuch"])
+    assert r.exit_code != 0 and "unknown area 'nosuch'" in r.output
+    r = run(main, ["run", "demo", "verify", "--area", "misc"])
+    assert r.exit_code == 2 and "verification is not per area" in r.output
+    (root / "projects" / "demo" / "lenses" / "parsers.md").write_text(
+        "---\napplies:\n  areas: [parsing]\n---\n# parsers\n")
+    r = run(main, ["run", "demo", "sweep", "parsers", "--area", "misc"])
+    assert "nothing to do for sweep parsers in area misc" in r.output

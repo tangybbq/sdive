@@ -367,16 +367,24 @@ def _prefer_idle_area(conn: sqlite3.Connection, project: str, snap: int, lens_id
     return idle + [r for r in rows if r["area"] in busy]
 
 
-def agent_minutes(conn: sqlite3.Connection, project: str, snap: int
-                  ) -> dict[tuple[str, str | None], float]:
-    """Agent-minutes of recorded runs at `snap`, by (kind, lens name)."""
+def agent_minutes(conn: sqlite3.Connection, project: str, snap: int,
+                  area: str | None = None) -> dict[tuple[str, str | None], float]:
+    """Agent-minutes of recorded runs at `snap`, by (kind, lens name). With
+    `area`, only runs with a target in that area count (a sweep spanning
+    several areas counts in full for each)."""
     rows = conn.execute(
         """SELECT r.kind, l.name AS lens,
                   sum((julianday(r.finished_at) - julianday(r.started_at)) * 1440) AS m
            FROM runs r LEFT JOIN lenses l ON l.id = r.lens_id
-           WHERE r.project = ? AND r.snapshot_id = ? AND r.status = 'recorded'
+           WHERE r.project = :project AND r.snapshot_id = :snap AND r.status = 'recorded'
              AND r.finished_at IS NOT NULL
-           GROUP BY r.kind, l.name""", (project, snap)).fetchall()
+             AND (:area IS NULL OR EXISTS (
+                 SELECT 1 FROM run_targets t
+                 JOIN unit_versions uv ON uv.unit_id = t.unit_id
+                                      AND uv.snapshot_id = r.snapshot_id
+                 WHERE t.run_id = r.id AND uv.area = :area))
+           GROUP BY r.kind, l.name""",
+        {"project": project, "snap": snap, "area": area}).fetchall()
     return {(r["kind"], r["lens"]): r["m"] or 0.0 for r in rows}
 
 

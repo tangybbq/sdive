@@ -44,6 +44,11 @@ def test_invocation_and_command(tmp_path):
     dive = launch.Plan("dive", None, "")
     assert launch.invocation(dive, "mcuboot", "bench-x", 3, None, 1) == (
         "/sdive-dive mcuboot 3 --ledger bench-x")
+    assert launch.invocation(dive, "zephyr", "main", 5, None, 1, "bluetooth") == (
+        "/sdive-dive zephyr 5 --area bluetooth")
+    verify = launch.Plan("verify", None, "")
+    assert launch.invocation(verify, "zephyr", "main", 2, None, 1, "bluetooth") == (
+        "/sdive-verify zephyr 2")
     argv = launch.command("/sdive-dive mcuboot 1", "m", True, tmp_path / "staging")
     assert argv[:3] == ["claude", "--model", "m"] and argv[-1] == "/sdive-dive mcuboot 1"
     assert f"Write(/{(tmp_path / 'staging').resolve()}/**)" in argv
